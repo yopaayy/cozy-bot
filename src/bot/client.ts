@@ -23,6 +23,7 @@ export class CozyClient extends Client {
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildExpressions,
+        GatewayIntentBits.MessageContent,
       ],
       partials: [
         Partials.Message,

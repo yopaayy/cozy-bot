@@ -10,12 +10,12 @@
 
 | Item | Status |
 |---|---|
-| **Fase Saat Ini** | Fase 1 — Member Verification Gate |
-| **Task Aktif** | Ready for testing di server Cozy For Us |
-| **Terakhir Dikerjakan Oleh** | Gemini 3.8 Flash |
+| **Fase Saat Ini** | Modul Ekstensi — Economy & Minigames System |
+| **Tahap Aktif** | Tahap 1, 2, & 3 Selesai `🟢` (Economy, Slots, Mines & Coinflip 100% Ready & Terverifikasi) |
+| **Terakhir Dikerjakan Oleh** | Antigravity AI |
 | **Tanggal Update Terakhir** | 2026-09-08 |
 | **Blocker** | Tidak ada |
-| **Next Action** | Uji command `/verify-setup` & `/verify-panel` di server Discord oleh YP |
+| **Next Action** | Deployment ke Hosting Pterodactyl & Transisi ke Fase 2: Welcome & Goodbye System |
 
 ---
 
@@ -148,6 +148,47 @@
 - [ ] Production deployment
 - [ ] Monitoring & alerting setup
 
+### Fase Ekstensi: Economy & Minigames System (Gamble) `🟡 IN PROGRESS`
+
+#### Tahap 1: Core Economy, Bank, Rewards, Cooldowns & Cozy Slots `🟢 COMPLETED`
+- [x] Database migration: kolom `cozy_cash`, `cozy_bank`, `daily_streak`, `last_daily`, `last_weekly`, `last_work`, `is_registered` di tabel `users`
+- [x] Anti-Bypass Registration Guard: cegah eksekusi fitur sebelum registrasi via `creg`
+- [x] Command: `creg` / `cozyreg` dengan button konfirmasi interaktif `[ ✅ Accept ]` / `[ ❌ Decline ]` + bonus 10,000 Cozy Cash
+- [x] Dompet & Brankas Aman: `ccash`, `cdep`, `cwith`, `cpay`
+- [x] Standarisasi Angka & Shorthand: `parseNominal` (`10k`, `100k`, `1m`, `all`), `formatCash` (koma internasional `en-US`, 0 titik desimal)
+- [x] Urutan tampilan konsisten: `(Cash: X | Bank: Y)` di seluruh command
+- [x] Penghasilan: `cdaily` (streak harian), `cweekly`, `cwork` (10 profesi Cozy santai)
+- [x] Papan peringkat sultan: `ctop` / `clb`
+- [x] Mesin slot: `cslot` / `cozyslot` (3-reel, 5 simbol kustom, animasi 4-frame anti rate-limit Discord, 95% CSPRNG RTP)
+- [x] Hak akses pengembang: `caddcash` dan `csetcash` terproteksi Developer ID & Owner ID
+- [x] Ketahanan koneksi database: `withDbRetry` untuk menangani P1001 remote packet drop
+- [x] Unit testing: 29 / 29 tests PASSED di Vitest
+
+#### Tahap 2: Cozy Mines Minigame (`cmines`) `🟢 COMPLETED`
+- [x] Arsitektur **Discord Components V2 Container** (`ContainerBuilder` Type 17, `flags: MessageFlags.IsComponentsV2`)
+- [x] Engine: `MinesEngine.ts` (penentuan posisi ranjau CSPRNG, formula multiplier dinamis dengan RTP 93.34%, 1.40x di langkah awal)
+- [x] Interaksi tombol Discord: Grid 3x3 lapang (9 tombol `?`) + 1 tombol khusus **Cash Out** hijau berikon 💵 di baris ke-4
+- [x] Konfigurasi ranjau: `cmines <bet> [mines_count]` (1-8 ranjau, default: 3)
+- [x] Multiplier bertingkat per petak aman yang berhasil dibuka
+- [x] Tombol khusus **Cash Out** dengan emoji 💵 untuk mengunci profit kapan saja
+- [x] Aksen warna kontainer dinamis: Cozy Dark (`#2B2D31`) saat main, Hijau (`#44FF44`) saat menang, Merah (`#FF4444`) saat kalah
+- [x] State management aktif per user untuk mencegah exploit multi-click dan anti double-game
+- [x] Auto safe-cashout pada timeout inaktivitas 2 menit
+- [x] Transaksi atomik saldo `cozy_cash` di database dengan `withDbRetry`
+- [x] 40 / 40 unit tests PASSED di Vitest
+- [x] Live Discord API test verified (berhasil mengirim dan mengedit pesan Components V2)
+
+#### Tahap 3: Cozy Coinflip Minigame (`ccoinflip` / `ccf`) `🟢 COMPLETED`
+- [x] Command fleksibel & shorthand: `ccoinflip`, `ccf`, `cozy coinflip`, `cozy cf`
+- [x] Dukungan fleksibel nominal: `10k`, `100k`, `1m`, `all` terintegrasi dengan `parseNominal`
+- [x] Parsing pilihan sisi: `h`/`head`/`heads` (Heads), `t`/`tail`/`tails` (Tails)
+- [x] **Fitur Auto-Random Side**: Jika user tidak menyertakan sisi (misal `ccf 2` atau `ccf 10k`), sistem secara otomatis memilihkan Heads atau Tails secara acak dengan probabilitas seimbang (CSPRNG)
+- [x] Engine murni `CoinflipEngine.ts` dengan CSPRNG `crypto.randomInt(0, 2)` (RTP 100%, Payout 2x modal / 1:1 profit saat menang)
+- [x] Animasi 2-frame anti rate-limit Discord: Frame 1 koin berputar `<a:cozy_coinspin:ID>`, Frame 2 delay 1200ms hasil akhir `<:coin_heads:ID>` atau `<:coin_tails:ID>`
+- [x] Transaksi database atomik dilindungi `withDbRetry` + mutex in-memory lock `activeCoinflips` anti multi-click exploit
+- [x] 53 / 53 unit tests PASSED di Vitest (10 tests di `CoinflipEngine.test.ts`, 3 tests di `gamble.service.test.ts`)
+- [x] TypeScript compilation check & production build passed (0 error)
+
 ---
 
 ## 📝 Session Log
@@ -208,6 +249,125 @@
 - **Status akhir**: Fase 0 selesai 100%, Fase 1 code complete dan siap diuji langsung di server
 - **Blocker**: Tidak ada
 - **Next Action**: YP melakukan test interaksi di server Discord Cozy For Us
+
+### Session #4 — 2026-09-08 (Economy & Minigames Tahap 1 Optimization)
+- **Model**: Antigravity AI
+- **Durasi**: ~45 menit
+- **Apa yang dikerjakan**:
+  - Implementasi dan stabilisasi penuh modul **Economy & Minigames (Tahap 1)**:
+    - Skema database: `cozy_cash`, `cozy_bank`, `daily_streak`, dll. di tabel `users`.
+    - Modul pendaftaran `creg` dengan tombol interaktif dan bonus 10,000 Cozy Cash, dilindungi *Registration Guard*.
+    - Dompet & Bank (*Safe Cash*): `ccash`, `cdep`, `cwith`, `cpay`.
+    - Perbaikan inkonsistensi: Standardisasi urutan output menjadi selalu `(Cash: X | Bank: Y)`, menghilangkan titik desimal pemisah ribuan menjadi koma standar internasional `en-US` (`formatCash`).
+    - Dukungan fleksibel pengetikan nominal shorthand (`parseNominal`): `10000`, `10k`, `200k`, `1m`, `all`.
+    - Hadiah harian beruntun (`cdaily`), mingguan (`cweekly`), dan sistem kerja profesi Cozy (`cwork`).
+    - Papan peringkat kekayaan (`ctop` / `clb`).
+    - Minigame Cozy Slots (`cslot` / `cozyslot`): 3-reel slot machine, 5 simbol kustom, animasi 4-frame pacing Discord-safe (`1100ms ➜ 1000ms ➜ 1000ms`), CSPRNG 95% RTP.
+    - Hak akses pengembang: `caddcash` dan `csetcash` terproteksi Developer ID & Owner ID.
+    - Ketahanan database: `withDbRetry` untuk mengatasi network hiccup remote MySQL (P1001).
+    - Menulis 29 unit tests (Vitest) dengan coverage penuh (`gamble.utils.test.ts`, `SlotsEngine.test.ts`, `gamble.service.test.ts`).
+    - Build TypeScript pass (0 error).
+  - Update dokumentasi proyek: PRD, CHECKPOINT, COMMANDS_GUIDE, dan CONVENTIONS.
+- **Status akhir**: Modul Economy & Slots Tahap 1 stabil 100% dan terverifikasi oleh YP.
+- **Blocker**: Tidak ada.
+- **Next Action**: Memulai implementasi Tahap 2: Minigame Cozy Mines (`cmines`) grid 5x5 interaktif.
+
+### Session #5 — 2026-09-08 (Tahap 2: Cozy Mines Minigame Implementation)
+- **Model**: Antigravity AI
+- **Durasi**: ~35 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **Minigame Cozy Mines (`cmines`)**:
+    - `MinesEngine.ts`: Penempatan ranjau CSPRNG acak (`crypto.randomInt`), kalkulasi multiplier dinamis 95% RTP, mitigasi bug float IEEE-754 dengan integer scaling BigInt.
+    - Grid interaktif 5x5: 24 mystery tiles (0..23) + slot 24 sebagai tombol khusus **Cash Out** dengan emoji `💵` (`[ 💵 Cash Out: X ]`).
+    - Konfigurasi ranjau: `cmines <bet> [mines_count]` (1 hingga 23 ranjau, default 3 ranjau).
+    - Dukungan shorthand nominal: `10k`, `100k`, `1m`, `all` terintegrasi dengan `parseNominal`.
+    - Sistem proteksi & mitigasi celah: Mutex lock anti-spam click (`isBusy`), anti double-game (`ACTIVE_GAME_EXISTS`), proteksi klik pihak ketiga (hanya pembuat game yang bisa klik), serta auto safe-cashout jika inaktif selama 2 menit.
+    - Transaksi atomik database: Pemotongan taruhan di awal dan penambahan profit saat cash out terlindungi `withDbRetry`.
+    - Menulis 8 unit test tambahan (total 37 unit tests di Vitest, 100% passed).
+    - TypeScript compile check & production build passed (0 error).
+- **Status akhir**: Modul Cozy Mines selesai 100%, siap dimainkan langsung oleh YP.
+- **Blocker**: Tidak ada.
+- **Next Action**: YP melakukan testing langsung `cmines` di server Cozy For Us.
+
+### Session #6 — 2026-09-08 (Cozy Mines 3x3 Grid & Reference UI Rework)
+- **Model**: Antigravity AI
+- **Durasi**: ~25 menit
+- **Apa yang dikerjakan**:
+  - Rework arsitektur dan visual **Cozy Mines (`cmines`)** agar persis 100% dengan Gambar Referensi 2:
+    - **Grid 3x3 (9 petak)**: 3 baris x 3 kolom tombol berlabel `'?'` (Secondary) yang lapang, elegan, dan rapi, menggantikan grid padat 5x5 sebelumnya.
+    - **Baris Khusus Cash Out (Row 4)**: 1 tombol `[ 💵 Cash Out ]` hijau (`ButtonStyle.Success`) di bawah grid 3x3 yang otomatis aktif saat $\ge 1$ petak aman dibuka.
+    - **Kalibrasi Matematika Probabilitas & RTP**: $T=9$ petak, pilihan $1 \dots 8$ ranjau (default 3), RTP $93.34\%$. Menghasilkan multiplier langkah pertama persis $1.40\times$ ($10 \to 14$ payout), identik dengan gambar referensi.
+    - **Header Embed Minimalis & Rapi**:
+      ```text
+      **Bet:** `10`   **Mines:** `3`
+      **Cash Out:** `0` `(0.00x)`
+      **Next:** `14` `(1.40x)`
+      ```
+      dengan garis aksen biru Discord Blurple (`#5865F2`) tanpa judul panjang yang berantakan.
+    - **Konfirmasi Aset**: Menjelaskan kepada pengguna bahwa **TIDAK ADA aset offline yang perlu diambil**. Seluruh tampilan murni menggunakan Discord Button Components bawaan (`?`, `💎`, `💣`, `💥`, `💵`).
+    - Total 40 unit tests di Vitest 100% passed (`MinesEngine.test.ts`, `gamble.service.test.ts`, dll.).
+    - TypeScript compilation check & production build passed (0 error).
+- **Status akhir**: Cozy Mines 3x3 Rework selesai sempurna, siap dimainkan.
+- **Blocker**: Tidak ada.
+- **Next Action**: YP melakukan pengetesan `cmines` di Discord.
+
+### Session #7 — 2026-09-08 (Discord Components V2 Container Implementation)
+- **Model**: Antigravity AI
+- **Durasi**: ~20 menit
+- **Apa yang dikerjakan**:
+  - Memecahkan misteri layout kontainer solid seperti Xera Bot:
+    - Menemukan kunci API Discord: pesan wajib menyertakan flag `flags: MessageFlags.IsComponentsV2` (nilai integer `32768` / `1 << 15`).
+    - Tanpa flag tersebut, Discord menolak sebagai V1 (`Value of field "type" must be one of (1,)`). Dengan flag tersebut, Discord mengizinkan **`ContainerBuilder` (Type 17)** secara resmi tanpa memerlukan whitelist khusus!
+  - Mengonversi Cozy Mines ke arsitektur **Components V2 Container** sepenuhnya:
+    - Seluruh game dibungkus dalam satu kontainer solid dengan `setAccentColor` (Dark Cozy saat main, Hijau saat menang, Merah saat kalah persis Xera Bot).
+    - Header teks menggunakan `TextDisplayBuilder` (Type 10).
+    - Garis pembatas horizontal menggunakan `SeparatorBuilder` bawaan (Type 14, `setDivider(true)`).
+    - Grid 3x3 dan tombol Cash Out bersarang rapi di dalam kontainer.
+    - Respon klik tombol diperbarui melalui `interaction.message.edit({ flags: MessageFlags.IsComponentsV2, components: [container.toJSON()] })`.
+  - Menguji secara langsung di Discord test channel: pesan berhasil dikirim dan diedit secara real-time.
+  - Vitest 40/40 passed (100%), TypeScript compile pass (0 error).
+- **Status akhir**: Cozy Mines kini memiliki tampilan Container V2 yang identik 100% dengan Xera Bot.
+- **Blocker**: Tidak ada.
+- **Next Action**: YP melakukan testing langsung `cmines` di Discord.
+
+### Session #8 — 2026-09-08 (Tahap 3: Cozy Coinflip Minigame Implementation)
+- **Model**: Antigravity AI
+- **Durasi**: ~25 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **Minigame Cozy Coinflip (`ccoinflip` / `ccf`)**:
+    - `CoinflipEngine.ts`: Normalisasi input sisi tebakan (`h`, `head`, `heads`, `t`, `tail`, `tails`), fitur auto-random side jika sisi diabaikan user, validasi saldo & taruhan min/max, dan evaluasi hasil CSPRNG `crypto.randomInt(0, 2)`.
+    - `gamble.assets.ts`: Registrasi aset emoji kustom dari guild: `<:coin_heads:1546870810172596224>`, `<:coin_tails:1546870841977995424>`, dan animated GIF `<a:cozy_coinspin:1546876117464383589>`, lengkap dengan fallback emoji unicode.
+    - `gamble.service.ts`: Transaksi atomik saldo dompet `cozy_cash` dengan mekanisme `withDbRetry` untuk ketahanan terhadap network spike MySQL remote.
+    - `gamble.text-handler.ts`: Integrasi command & alias (`ccoinflip`, `ccf`, `cozy coinflip`, `cozy cf`), mutex lock anti-spam `activeCoinflips`, dan animasi 2-frame dengan delay 1200ms.
+    - Menulis 13 unit tests baru (10 di `CoinflipEngine.test.ts`, 3 di `gamble.service.test.ts`) — total 53/53 tests passed di Vitest.
+    - TypeScript compilation & production build lolos 100% (0 error).
+  - Update dokumentasi proyek: PRD Final, CHECKPOINT, COMMANDS_GUIDE, dan CONVENTIONS.
+- **Status akhir**: Minigame Cozy Coinflip selesai 100%, siap dimainkan.
+- **Blocker**: Tidak ada.
+- **Next Action**: YP melakukan testing langsung `ccf` / `ccoinflip` di Discord & transisi ke **Fase 2: Welcome & Goodbye System**.
+
+### Session #9 — 2026-09-08 (Coinflip UI Rework, Server Display Name & Anti-Spam Cooldown)
+- **Model**: Antigravity AI
+- **Durasi**: ~20 menit
+- **Apa yang dikerjakan**:
+  - **Rework UI Coinflip Sesuai Referensi Gambar**:
+    - Mengganti box frame sebelumnya menjadi format teks 2-baris bersih (`**dojaa** spent 💵 **10** and chose **tails**` / `The coin spins... <a:cozy_coinspin:ID>`).
+    - Edit in-place Frame 2 menampilkan emoji hasil lemparan (`:coin_heads:` / `:coin_tails:`) dan status kemenangan (`and you won 💵 **20**! :D` / `and you won nothing... :c`).
+  - **Fleksibilitas Input All & Variasi Posisi**:
+    - Mendukung penuh `ccf all`, `ccf all t`, `ccf all h`, serta posisi terbalik `ccf t all`, `ccf h all`.
+    - Auto-clamping taruhan `all` ke `maxBet` (250,000) jika saldo melebihi batas, dan error handling `INSUFFICIENT_FUNDS` jika saldo dompet 0.
+  - **Server Profile Display Name Priority**:
+    - Seluruh interaksi bot kini memprioritaskan nama profil/nickname di server Discord (`message.member.displayName`), bukan username handle Discord global (`whavetoearth`), berlaku universal untuk semua member.
+  - **Anti-Spam Cooldown (Jeda Waktu Rasional Sesuai Referensi Gambar)**:
+    - Jeda 3 detik untuk Coinflip (`ccf`) dan 4 detik untuk Slots (`cslot`).
+    - Pesan penolakan spamming identik dengan tangkapan layar referensi:
+      `⏱️ | **dojaa**, please wait **2s** before playing this game again!`
+  - **Uji Coba & Stabilisasi**:
+    - 53 / 53 unit tests PASSED di Vitest (100% lolos).
+    - TypeScript compilation & production build lolos (0 error).
+- **Status akhir**: Modul Economy & Minigames (Tahap 1, 2, 3) selesai 100%, siap di-deploy ke server hosting Pterodactyl.
+- **Blocker**: Tidak ada.
+- **Next Action**: Upload & deployment ke hosting Pterodactyl, lalu transisi ke **Fase 2: Welcome & Goodbye System**.
 
 ---
 

@@ -10,13 +10,70 @@ datasource db {
 }
 
 model users {
-  discordId   String   @id @map("discord_id") @db.VarChar(32)
-  username    String?  @db.VarChar(64)
-  isVerified  Boolean  @default(false) @map("is_verified")
-  joinedAt    DateTime @default(now()) @map("joined_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  discordId   String    @id @map("discord_id") @db.VarChar(32)
+  username    String?   @db.VarChar(64)
+  isVerified  Boolean   @default(false) @map("is_verified")
+  isRegistered Boolean   @default(false) @map("is_registered")
+  cozyCash    BigInt    @default(0) @map("cozy_cash")
+  cozyBank    BigInt    @default(0) @map("cozy_bank")
+  dailyStreak Int       @default(0) @map("daily_streak")
+  lastDaily   DateTime? @map("last_daily")
+  lastWeekly  DateTime? @map("last_weekly")
+  lastWork    DateTime? @map("last_work")
+  joinedAt    DateTime  @default(now()) @map("joined_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@map("users")
+}
+
+model minesSession {
+  userId        String   @id @map("user_id") @db.VarChar(32)
+  channelId     String   @map("channel_id") @db.VarChar(32)
+  messageId     String   @map("message_id") @db.VarChar(32)
+  bet           BigInt   @map("bet")
+  minesCount    Int      @map("mines_count")
+  minePositions String   @map("mine_positions") @db.VarChar(64)
+  revealedTiles String   @map("revealed_tiles") @db.VarChar(64)
+  currentStep   Int      @default(0) @map("current_step")
+  active        Boolean  @default(true)
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("mines_sessions")
+}
+
+model blackjackSession {
+  userId      String   @id @map("user_id") @db.VarChar(32)
+  bet         BigInt   @map("bet")
+  deckState   String   @map("deck_state") @db.Text
+  playerHand  String   @map("player_hand") @db.Text
+  dealerHand  String   @map("dealer_hand") @db.Text
+  active      Boolean  @default(true)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("blackjack_sessions")
+}
+
+model lotteryTicket {
+  id         Int      @id @default(autoincrement())
+  userId     String   @map("user_id") @db.VarChar(32)
+  guildId    String   @map("guild_id") @db.VarChar(32)
+  channelId  String   @map("channel_id") @db.VarChar(32)
+  amount     BigInt   @default(0)
+  drawDate   DateTime @map("draw_date") @db.Date
+  valid      Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([drawDate, valid])
+  @@map("lottery_tickets")
+}
+
+model channelDrop {
+  channelId String   @id @map("channel_id") @db.VarChar(32)
+  guildId   String   @map("guild_id") @db.VarChar(32)
+  amount    BigInt   @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("channel_drops")
 }
 
 model guildConfig {

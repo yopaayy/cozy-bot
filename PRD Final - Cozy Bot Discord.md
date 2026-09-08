@@ -398,4 +398,28 @@ Dikembangkan **satu fitur selesai dulu baru lanjut ke fitur berikutnya**, dimula
 
 ---
 
-**Catatan Penutup:** PRD ini merangkum seluruh fitur yang sudah berjalan di referensi bot (Xera Bot) — welcome/goodbye, leveling, ticket, streak — dan mengintegrasikan fitur baru yang diminta, yaitu **member verification gate** sebagai target pengembangan pertama, disusul fitur-fitur lain secara bertahap, dan **Cozy Dashboard** sebagai lapisan pengelolaan berbasis web yang dibangun setelah seluruh fitur inti bot selesai — semua dengan identitas visual black & white yang menyatu dengan brand komunitas Cozy For Us.
+## 18. Modul Tambahan: Economy & Minigames System (Gamble)
+
+Fitur ekonomi mandiri dan minigame interaktif untuk mendongkrak aktivitas dan retensi member Cozy For Us, menggunakan mata uang server `<:cozycash:ID>` **Cozy Cash**.
+
+### 18.1 Arsitektur & Aturan Mata Uang
+- **Mata Uang:** Cozy Cash (Emoji: `<:cozycash:ID>` untuk semua elemen taruhan, saldo, transfer, kecuali tombol *Cash Out* di mines yang menggunakan 💵).
+- **Penyimpanan Ganda:**
+  - `Cash` (Dompet Aktif): Saldo yang dapat dipakai berjudi (`cslot`, `cmines`) dan transfer (`cpay`).
+  - `Bank` (*Safe Cash*): Saldo simpanan aman yang terkunci dari aktivitas judi.
+- **Standarisasi Nominal & Formatting:**
+  - Format angka bebas titik desimal: menggunakan koma standar internasional (`50,000`, `29,696`, `20,304`).
+  - Fleksibilitas shorthand input: `10000` / `10k`, `200000` / `200k`, `1000000` / `1m`, serta `all`.
+  - Konsistensi tampilan output: Selalu berurutan `(Cash: X | Bank: Y)`.
+
+### 18.2 Roadmap Implementasi Economy
+| Tahap | Modul & Fitur | Status | Detail |
+|---|---|---|---|
+| **Tahap 1** | **Core Economy, Bank & Cozy Slots (`cslot`)** | `🟢 COMPLETED` | - Skema DB persisten (`cozy_cash`, `cozy_bank`, cooldowns)<br>- `creg` Anti-Bypass Registration Guard & starter bonus 10,000<br>- Dompet & Bank: `ccash`, `cdep`, `cwith`, `cpay`<br>- Hadiah: `cdaily`, `cweekly`, `cwork`, `ctop`<br>- Mesin slot 3-reel 5 simbol custom, animasi 4-frame, 95% RTP |
+| **Tahap 2** | **Cozy Mines Minigame (`cmines`)** | `🟢 COMPLETED` | - Arsitektur **Discord Components V2 Container** (`ContainerBuilder` Type 17, `flags: MessageFlags.IsComponentsV2`)<br>- Grid 3x3 lapang (9 tombol `?`) + 1 baris khusus tombol `[ 💵 Cash Out ]` hijau di bawah<br>- Pilihan 1 s/d 8 ranjau (default: 3)<br>- Formula multiplier presisi CSPRNG RTP 93.34% ($10 \to 14$ payout pada 3 ranjau, $1.40\times$)<br>- Aksen warna kontainer dinamis: Dark saat main, Hijau saat cashout, Merah saat kalah<br>- State management atomik database (`withDbRetry`) + anti-spam mutex & auto safe-cashout 2 menit |
+| **Tahap 3** | **Cozy Coinflip Minigame (`ccoinflip` / `ccf`)** | `🟢 COMPLETED` | - Command & shortcut fleksibel: `ccoinflip`, `ccf`, `cozy coinflip`, `cozy cf`<br>- Dukungan shorthand taruhan (`10k`, `100k`, `1m`, `all`)<br>- Logika pilihan sisi: `h`/`head`/`heads` (Heads), `t`/`tail`/`tails` (Tails)<br>- **Auto-random picker**: Jika sisi tidak ditentukan (misal `ccf 2` atau `ccf 10k`), sistem otomatis memilihkan Heads atau Tails secara acak (CSPRNG)<br>- Payout 2x modal ($1:1$ profit) saat tebakan benar, $0$ saat kalah<br>- Animasi 2-frame anti rate-limit (Frame 1: `<a:cozy_coinspin:ID>`, Frame 2 delay 1200ms: `<:coin_heads:ID>` / `<:coin_tails:ID>`)<br>- Transaksi atomik database `withDbRetry` + lock anti multi-game |
+
+---
+
+**Catatan Penutup:** PRD ini merangkum seluruh fitur yang sudah berjalan di referensi bot (Xera Bot) — welcome/goodbye, leveling, ticket, streak — serta modul **Member Verification Gate** dan **Economy & Minigames System (Cozy Slots, Cozy Mines, dan Cozy Coinflip)**, disusul fitur-fitur lain secara bertahap, dan **Cozy Dashboard** sebagai lapisan pengelolaan berbasis web — semua dengan identitas visual black & white yang menyatu dengan brand komunitas Cozy For Us.
+

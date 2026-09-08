@@ -8,6 +8,7 @@ export const COLORS = {
   ERROR: 0xFF4444,        // Red (error / close)
   SUCCESS: 0x44FF44,      // Green (success confirmation)
   WARNING: 0xFFAA00,      // Orange (warning)
+  DARK: 0x2B2D31,         // Discord dark theme
 } as const;
 
 export const EMOJI = {

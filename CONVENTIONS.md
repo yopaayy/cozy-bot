@@ -21,7 +21,7 @@
 | Frontend (Dashboard) | Next.js + Tailwind CSS | Next 14+ / TW v3 | Build static → serve via Fastify |
 | Process Manager | Pterodactyl (built-in) | - | **Bukan PM2** — hosting sudah handle |
 | Package Manager | npm | v10+ | Lebih aman untuk Pterodactyl |
-| Command Style | Pure Slash Commands | - | **Tanpa prefix command** |
+| Command Style | Hybrid: Slash + Direct Text | - | Slash Commands (Admin/Config/Verify) + Direct Text (Economy & Minigames) |
 
 > **Catatan**: Jangan pernah mengganti tech stack tanpa update di dokumen ini DAN persetujuan owner (YP).
 
@@ -31,7 +31,8 @@
 |---|---|---|
 | Database | MySQL langsung (dari Pterodactyl panel) | Hosting menyediakan MySQL, Prisma support penuh, sudah di-setup |
 | Monorepo style | Flat monorepo (single package.json) | Pterodactyl constraint: 1 entry point, 2GB RAM, 10GB storage |
-| Command style | Pure slash commands | Modern, tidak perlu MessageContent intent |
+| Command style | Hybrid (Slash + Direct Text) | Slash Commands untuk sistem formal/admin, Direct Text tanpa prefix (`ccash`, `cslot`, `cmines`) agar gameplay instan |
+| Economy & Currency | Standarisasi Format Angka | `formatCash` (en-US comma, no dots), `parseNominal` fleksibel (10k, 100k, 1m, all), urutan konsisten `(Cash: X \| Bank: Y)` |
 | Role management | Owner menyediakan role sendiri | @Unverified & @Verified sudah ada di server |
 | Dashboard deploy | Build static → serve via Fastify (same process) | Hemat RAM, 1 process untuk bot + API + dashboard |
 | Process manager | Pterodactyl built-in | Hosting sudah handle auto-restart |
@@ -115,9 +116,16 @@ cozy-bot/
 │   │   │   ├── leveling/
 │   │   │   │   ├── leveling.service.ts
 │   │   │   │   └── leveling.types.ts
-│   │   │   └── streak/
-│   │   │       ├── streak.service.ts
-│   │   │       └── streak.types.ts
+│   │   │   ├── streak/
+│   │   │   │   ├── streak.service.ts
+│   │   │   │   └── streak.types.ts
+│   │   │   └── gamble/            # Economy & Minigames (Slots, Mines, Coinflip)
+│   │   │       ├── gamble.service.ts
+│   │   │       ├── gamble.text-handler.ts
+│   │   │       ├── gamble.types.ts
+│   │   │       ├── gamble.assets.ts
+│   │   │       ├── gamble.utils.ts
+│   │   │       └── engines/       # SlotsEngine, MinesEngine, CoinflipEngine
 │   │   ├── components/        # Button, SelectMenu, Modal handlers
 │   │   │   ├── ticket-components.ts
 │   │   │   └── streak-components.ts
@@ -463,22 +471,21 @@ POST   /api/v1/verify/force      → Force verify user
 
 ---
 
-## 10. Aturan untuk AI Assistant
+## 11. Discord Components V2 Standards
 
-> Bagian ini khusus untuk AI assistant yang membantu development Cozy Bot.
-
-1. **SELALU baca** `CHECKPOINT.md` sebelum mulai bekerja untuk tahu progress terakhir.
-2. **SELALU baca** `CONVENTIONS.md` (dokumen ini) untuk memahami standar kode.
-3. **SELALU baca** `implementation_plan.md` untuk tahu task mana yang harus dikerjakan.
-4. **JANGAN** mengubah tech stack tanpa alasan yang sangat kuat dan persetujuan.
-5. **JANGAN** menulis logic di file command/event handler — semua logic ada di service.
-6. **JANGAN** menggunakan `any` di TypeScript kecuali benar-benar terpaksa (dan tulis komentar alasannya).
-7. **JANGAN** mengubah format embed (selalu gunakan `createCozyEmbed()`).
-8. **JANGAN** hard-code channel ID, role ID, atau token — selalu dari config/database.
-9. **SETELAH selesai sesi kerja**, update `CHECKPOINT.md` dengan progress terbaru.
-10. **JIKA menemukan inkonsistensi** antara PRD dan implementasi, catat di `CHECKPOINT.md` bagian "Issues / Open Questions".
+Untuk minigame dan komponen interaktif modern yang membutuhkan container solid dengan garis samping warna terpadu (seperti `cmines`):
+1. **Wajib menyertakan flag `flags: MessageFlags.IsComponentsV2` (32768 / `1 << 15`)** pada payload pengiriman pesan maupun respon interaksi (`interaction.message.edit`).
+2. **Komponen yang digunakan:**
+   - `ContainerBuilder` (Type 17): Wadah utama dengan `setAccentColor(...)`.
+   - `TextDisplayBuilder` (Type 10): Untuk teks header dan deskripsi stat/winnings.
+   - `SeparatorBuilder` (Type 14): `setDivider(true)` untuk garis pemisah horizontal bawaan Discord.
+   - `ActionRowBuilder` (Type 1): Untuk baris tombol interaktif di dalam Container.
+3. **Pola Pembaruan Interaksi:**
+   - Panggil `await interaction.deferUpdate()` untuk merespon Discord gateway.
+   - Panggil `await interaction.message.edit({ flags: MessageFlags.IsComponentsV2, components: [container.toJSON()] })` untuk pembaruan komponen secara instan dan atomik.
 
 ---
 
 *Dokumen ini terakhir diperbarui: 2026-09-08*
-*Versi: 1.0*
+*Versi: 1.1*
+

@@ -9,7 +9,7 @@
 ## Ringkasan Analisis PRD
 
 ### Apa yang Akan Dibangun
-Cozy Bot adalah Discord bot **all-in-one** milik komunitas "Cozy For Us" dengan 5 fitur inti + web dashboard:
+Cozy Bot adalah Discord bot **all-in-one** milik komunitas "Cozy For Us" dengan 6 fitur inti + web dashboard + modul minigame:
 
 1. **Member Verification Gate** — Sistem verifikasi berbasis reaction
 2. **Welcome & Goodbye** — Pesan sambutan/perpisahan otomatis
@@ -17,6 +17,7 @@ Cozy Bot adalah Discord bot **all-in-one** milik komunitas "Cozy For Us" dengan 
 4. **Leveling System** — XP dari voice & text activity
 5. **Streak System** — Streak harian antar 2 member
 6. **Cozy Dashboard** — Web admin panel dengan Discord OAuth2
+7. **Cozy Economy & Minigames System** — Cozy Cash, Bank (*Safe Cash*), Cozy Slots (5 simbol kustom), Cozy Mines (`cmines`), Coinflip, Lottery harian, dan Drop & Pickup
 
 ### Prinsip Arsitektur (Finalized)
 - **Flat monorepo** — single `package.json`, bot + API dalam 1 process Node.js
@@ -25,8 +26,8 @@ Cozy Bot adalah Discord bot **all-in-one** milik komunitas "Cozy For Us" dengan 
 - **Single-server first** — Didesain untuk 1 guild, arsitektur siap multi-guild nanti
 - **1 process architecture** — Bot + Fastify API dalam 1 process (hemat RAM, Pterodactyl constraint: 2GB)
 - **Dashboard static build** — Next.js di-build jadi static files, di-serve oleh Fastify
-- **Pure slash commands** — Tanpa prefix command, modern & tidak perlu MessageContent intent
-- **Visual konsisten** — Black & white theme di semua output
+- **Command Style Hybrid** — Pure slash commands untuk sistem utilitas/admin/dashboard, dan **Direct Text Commands** (tanpa `/`) untuk Cozy Minigames & Economy agar cepat dan simpel
+- **Visual konsisten** — Black & white theme di semua output embed
 
 ### Hosting Constraints (Pterodactyl Panel)
 | Resource | Limit |
@@ -768,5 +769,180 @@ graph TD
 
 ---
 
+---
+
+## Fase Ekstra: Cozy Economy & Minigames System (Rework OwO ke Cozy Bot + Cozy Mines)
+
+> **Konteks**: Modul ekonomi dan minigame mandiri yang dirombak total dari sistem OwO Bot menjadi milik Cozy Bot, dilengkapi minigame **Cozy Mines (`cmines`)** yang mengadaptasi Xera Bot (menggantikan Blackjack yang dinonaktifkan untuk fase mendatang), serta sistem **Bank (*Safe Cash*)**, **Daily/Weekly Reward dengan Streak**, dan **Leaderboard Sultan (`ctop`)**.
+> 
+> **Gaya Perintah**: **Direct Text Commands** tanpa garis miring (`/`) agar interaksi cepat, simpel, dan ramah di chat Discord.
+
+### 1. Ringkasan Fitur & Daftar Perintah
+| Perintah | Status | Deskripsi / Catatan |
+| :--- | :---: | :--- |
+| `ccash` / `cozycash` | **AKTIF (Tahap 1)** | Cek saldo dompet (Cash) & brankas (Bank) format bahasa Inggris + emoji `:cozycash:` |
+| `cwork` / `cozy work` | **AKTIF (Tahap 1)** | Bekerja menambah pundi-pundi Cozy Cash (cooldown 180 menit, profesi unik) |
+| `cdep` / `cozy dep` | **AKTIF (Tahap 1)** | Menyetor uang dari Cash ke Bank (Safe Cash bebas risiko) |
+| `cwith` / `cozy with` | **AKTIF (Tahap 1)** | Menarik uang dari Bank kembali ke dompet aktif Cash |
+| `cdaily` / `cozy daily` | **AKTIF (Tahap 1)** | Klaim reward harian + sistem Daily Streak (gif uang terbang & api berputar) |
+| `cweekly` / `cozy weekly` | **AKTIF (Tahap 1)** | Klaim reward mingguan (cooldown 7 hari) bernilai besar |
+| `ctop` / `clb` | **AKTIF (Tahap 1)** | Leaderboard top 10 sultan server dengan embed premium B&W estetik |
+| `cpay` / `cozy pay` | **AKTIF (Tahap 1)** | Transfer saldo antar-member dari dompet Cash |
+| `cozyslot` / `cozy slot` | **AKTIF (Tahap 1)** | Mesin slot 3-reel dengan 5 simbol kustom dari `cozy-assets/` & UI ASCII persis referensi |
+| `cmines` / `cozymines` | **AKTIF (Tahap 2)** | Minigame ranjau 3x3 tombol interaktif Discord, pilihan 1-8 bom, cashout dinamis |
+| `cozycf` / `cozy cf` | **AKTIF (Tahap 2)** | Lempar koin 50/50 fair berhadiah 2x multiplier |
+| `cozylot` / `cozy lot` | **AKTIF (Tahap 3)** | Lotere harian pot pooling terbobot |
+| `cozydrop` & `cozypick` | **AKTIF (Tahap 3)** | Hujan uang di channel dan perebutan saldo cepat |
+| `cozybj` / `cozy bj` | **DISABLED (Fase Mendatang)** | Blackjack 21 kartu (disimpan di blueprint, tidak diikutsertakan saat ini) |
+
+> [!IMPORTANT]
+> **Aturan Baku Emoji Mata Uang (:cozycash: Universal):**
+> Seluruh penyebutan nilai uang, taruhan (*bet*), kemenangan (*won*), pencairan (*cashed out*), pengeluaran (*spent*), reward (*earned*), dan saldo di seluruh game dan bot **WAJIB menggunakan emoji `<:cozycash:ID>`** (dengan fallback otomatis ke `🪙` jika emoji server belum diunggah).
+> 
+> **Satu-satunya Pengecualian:** Tombol fisik komponen Discord pada minigame `cmines` yang secara spesifik menampilkan ikon **`[ 💵 Cash Out ]`** bawaan Discord. Selain tombol tersebut, semuanya seragam menggunakan `<:cozycash:ID>`.
+
+### 2. Katalog Aset Lengkap
+- **Aset Slots (`gamble-standalone/cozy-assets/`)**:
+  - `slot_spin.gif` (`:slot_spin:`) — Animasi reel berputar
+  - `slotsitem1.png` (`:slotsitem1:`) — Simbol 1 (1x - Balik Modal)
+  - `slotsitem2.png` (`:slotsitem2:`) — Simbol 2 (2x - Double Win)
+  - `slotsitem3.png` (`:slotsitem3:`) — Simbol 3 (5x - Big Win)
+  - `slotsitem4.png` (`:slotsitem4:`) — Simbol Jackpot Part 1
+  - `slotsitem5.png` (`:slotsitem5:`) — Simbol Jackpot Part 2 (Pola: 4 - 5 - 4 -> 10x JACKPOT)
+  - `cozycash.jpg` (`:cozycash:`) — Logo mata uang resmi Cozy Cash (digunakan di seluruh bot)
+- **Aset Coinflip (`gamble-standalone/cozy-assets/`)**:
+  - `cozy_coinspin.gif` (`:cozy_coinspin:`) — Animasi koin berputar
+  - `coin_heads.jpg` (`:coin_heads:`) — Sisi kepala
+  - `coin_tails.jpg` (`:coin_tails:`) — Sisi ekor
+- **Aset Cozy Mines (`cmines`)**:
+  - `:mines_tile:` — Kotak abu-abu / tanda tanya tertutup `?`
+  - `:mines_diamond:` — Berlian kristal biru saat tebakan sukses
+  - `:mines_exploded:` — Efek ledakan merah saat ranjau terinjak
+  - `:mines_bomb:` — Bom hitam besi terbuka di akhir permainan
+  - `:mines_pickaxe:` — Ikon beliung di header embed
+  - `[ 💵 Cash Out ]` — Tombol hijau pencairan langsung menggunakan emoji bawaan Discord `💵`
+- **Aset Daily & Weekly (GIF Animasi)**:
+  - `:cash_flying:` — Gambar gepokan uang dolar bersayap mengepak (*flying money*)
+  - `:fire_streak:` — Gambar kobaran api berputar/bergerak tanda streak aktif
+
+### 3. Tampilan UI & Mekanisme Game
+- **Cozy Slots UI (100% Persis Referensi)**:
+  ```text
+  ** `___SLOTS___`**
+  ` ` {s1} {s2} {s3} ` ` **{username}** bet <:cozycash:ID> {bet}
+  `|         |`   {statusText}
+  `|         |`
+  ```
+  Animasi 4 frame bergerak berurutan dari kiri ke kanan (Reel 1 berhenti -> Reel 2 berhenti -> Reel 3 berhenti).
+  Status teks: `and is spinning and spinning...`, kalah: `and won nothing... :c`, menang: `and won <:cozycash:ID> {payout}! 🎉`.
+  RTP 95.0% (House Edge 5.0%).
+- **Cozy Mines UI**:
+  Grid 3x3 tombol interaktif Discord + tombol `[ 💵 Cash Out ]`.
+  Contoh teks: `cashed out <:cozycash:ID> 427!`, `spent <:cozycash:ID> 50`.
+  Rumus perkalian dinamis (95% RTP):
+  $$\text{Multiplier}_k = 0.95 \times \prod_{i=0}^{k-1} \frac{9 - i}{(9 - M) - i}$$
+- **Cozy Cash & Bank System (*Safe Cash*)**:
+  Format tampilan:
+  `<:cozycash:ID> | You currently have **{total} Cozy Cash**! (Cash: `{cash}` | Bank: `{bank}`)`
+  Uang di Bank (*Safe Cash*) tidak bisa digunakan berjudi atau terjatuh saat drop.
+- **Sistem Kerja / Minigame Work (`cwork` / `cozy work`)**:
+  Menambah pundi-pundi uang pemain secara berkala:
+  ```text
+  💼 You Worked!
+  📚 Profession: Guru Les Privat
+
+  Earned: <:cozycash:ID> 6,256 Cozy Cash
+  Wallet Balance: <:cozycash:ID> 6,256 Cozy Cash
+
+  Cozy Bot • Cooldown: 180 minutes
+  ```
+  * Cooldown: 180 menit (3 jam).
+  * Pilihan Profesi: Random dari daftar profesi santai & seru khas Cozy (Barista Kopi, Guru Les Privat, Graphic Designer, Programmer Begadang, dsb.).
+  * Reward: 2,500 - 7,500 Cozy Cash (langsung masuk ke dompet Cash).
+- **Leaderboard Sultan (`ctop` / `clb`)**:
+  Embed hitam-putih estetik B&W (`createCozyEmbed`) dengan medali 🥇 🥈 🥉, rincian Cash & Bank, dan footer posisi peringkat pemain.
+- **Daily & Weekly Rewards**:
+  - `cdaily`: Base 5,000 + (streak * 500) Cozy Cash, cooldown 24 jam.
+  - `cweekly`: 50,000 Cozy Cash, cooldown 7 hari.
+
+### 4. Skema Database Prisma (MySQL)
+Tabel `users` ditambah kolom:
+```prisma
+model users {
+  discordId   String    @id @map("discord_id") @db.VarChar(32)
+  username    String?   @db.VarChar(64)
+  isVerified  Boolean   @default(false) @map("is_verified")
+  cozyCash    BigInt    @default(0) @map("cozy_cash")    // Dompet Aktif
+  cozyBank    BigInt    @default(0) @map("cozy_bank")    // Brankas Aman (Safe Cash)
+  dailyStreak Int       @default(0) @map("daily_streak")  // Hitungan streak harian
+  lastDaily   DateTime? @map("last_daily")               // Cooldown daily
+  lastWeekly  DateTime? @map("last_weekly")              // Cooldown weekly
+  lastWork    DateTime? @map("last_work")                // Cooldown work (180 menit)
+  joinedAt    DateTime  @default(now()) @map("joined_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model minesSession {
+  userId        String   @id @map("user_id") @db.VarChar(32)
+  channelId     String   @map("channel_id") @db.VarChar(32)
+  messageId     String   @map("message_id") @db.VarChar(32)
+  bet           BigInt   @map("bet")
+  minesCount    Int      @map("mines_count")
+  minePositions String   @map("mine_positions") @db.VarChar(64)
+  revealedTiles String   @map("revealed_tiles") @db.VarChar(64)
+  currentStep   Int      @default(0) @map("current_step")
+  active        Boolean  @default(true)
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("mines_sessions")
+}
+
+model blackjackSession {
+  userId      String   @id @map("user_id") @db.VarChar(32)
+  bet         BigInt   @map("bet")
+  deckState   String   @map("deck_state") @db.Text
+  playerHand  String   @map("player_hand") @db.Text
+  dealerHand  String   @map("dealer_hand") @db.Text
+  active      Boolean  @default(true)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("blackjack_sessions")
+}
+
+model lotteryTicket {
+  id         Int      @id @default(autoincrement())
+  userId     String   @map("user_id") @db.VarChar(32)
+  guildId    String   @map("guild_id") @db.VarChar(32)
+  channelId  String   @map("channel_id") @db.VarChar(32)
+  amount     BigInt   @default(0)
+  drawDate   DateTime @map("draw_date") @db.Date
+  valid      Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([drawDate, valid])
+  @@map("lottery_tickets")
+}
+
+model channelDrop {
+  channelId String   @id @map("channel_id") @db.VarChar(32)
+  guildId   String   @map("guild_id") @db.VarChar(32)
+  amount    BigInt   @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("channel_drops")
+}
+```
+
+### 5. Roadmap Eksekusi
+- **Tahap 1:** Fondasi Saldo & Bank (`ccash`, `cdep`, `cwith`), Daily & Weekly (`cdaily`, `cweekly`), Leaderboard (`ctop`), dan Minigame **Cozy Slots** (`cozyslot`).
+- **Tahap 2:** Minigame **Cozy Mines** (`cmines`) dan **Cozy Coinflip** (`cozycf`).
+- **Tahap 3:** **Cozy Lottery** (`cozylot`) dan **Cozy Drop & Pickup** (`cozydrop` / `cozypick`).
+- **Fase Mendatang:** Cozy Blackjack (`cozybj`).
+
+---
+
 *Dokumen ini terakhir diperbarui: 2026-09-08*
-*Versi: 2.0 (finalized)*
+*Versi: 2.1 (Gamble & Minigames Expansion)*
+
