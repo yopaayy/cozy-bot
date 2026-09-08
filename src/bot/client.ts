@@ -1,5 +1,5 @@
 // src/bot/client.ts
-import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Collection, GatewayIntentBits, Partials, ActivityType } from 'discord.js';
 import type {
   Command,
   ButtonHandler,
@@ -30,6 +30,16 @@ export class CozyClient extends Client {
         Partials.Channel,
         Partials.User,
       ],
+      presence: {
+        status: 'online',
+        activities: [
+          {
+            name: 'Cozy For Us 🤍',
+            type: ActivityType.Custom,
+            state: 'Vibing at Cozy For Us 🤍',
+          },
+        ],
+      },
     });
 
     this.on('error', (err) => {

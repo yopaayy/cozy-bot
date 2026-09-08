@@ -4,9 +4,9 @@
   "description": "Official Bot of Cozy For Us Community — Discord Bot + Web Dashboard",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx --dns-result-order=ipv4first src/index.ts",
     "build": "tsc -p tsconfig.bot.json",
-    "start": "node dist/index.js",
+    "start": "node --dns-result-order=ipv4first dist/index.js",
     "register": "tsx src/bot/register-commands.ts",
     "db:migrate": "npx prisma migrate dev",
     "db:push": "npx prisma db push",

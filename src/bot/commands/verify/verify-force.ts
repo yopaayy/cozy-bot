@@ -29,19 +29,23 @@ export const command: Command = {
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
+    // 1. Defer immediately to prevent Discord interaction timeout
+    await interaction.deferReply({ ephemeral: true });
+
     if (!interaction.guild || !interaction.member) {
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [createErrorEmbed('Command hanya bisa digunakan di dalam server.')],
-        ephemeral: true,
       });
       return;
     }
 
-    const adminMember = await interaction.guild.members.fetch(interaction.user.id);
-    if (!isAdmin(adminMember)) {
-      await interaction.reply({
+    const adminMember =
+      (interaction.member as GuildMember) ||
+      (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+
+    if (!adminMember || !isAdmin(adminMember)) {
+      await interaction.editReply({
         embeds: [createErrorEmbed('Akses Ditolak', 'Hanya Administrator yang dapat memverifikasi manual.')],
-        ephemeral: true,
       });
       return;
     }
@@ -50,14 +54,11 @@ export const command: Command = {
     const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
 
     if (!targetMember) {
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [createErrorEmbed('Member Tidak Ditemukan', 'Member tersebut tidak ada di server ini.')],
-        ephemeral: true,
       });
       return;
     }
-
-    await interaction.deferReply({ ephemeral: true });
 
     try {
       const result = await verificationService.verifyMember(

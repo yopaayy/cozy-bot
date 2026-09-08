@@ -1,5 +1,11 @@
-// src/index.ts
-// Main entry point: Bot + Fastify API in a single Node.js process
+import dns from 'dns';
+try {
+  dns.setServers(['1.1.1.1', '8.8.8.8', '1.0.0.1', '8.8.4.4']);
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {
+  // Ignore if not supported in environment
+}
+
 import { CozyClient } from './bot/client';
 import { loadCommands } from './bot/handlers/command-handler';
 import { loadEvents } from './bot/handlers/event-handler';
@@ -43,21 +49,13 @@ async function bootstrap() {
     logger.error({ err: apiErr }, `[API] Failed to start Fastify server on port ${config.SERVER_PORT}:`);
   }
 
-  // 5. Login Bot to Discord with clean retry
-  const maxRetries = 5;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logger.info(`[Bot] Logging into Discord (attempt ${attempt}/${maxRetries})...`);
-      await client.login(config.DISCORD_TOKEN);
-      logger.info('[Bot] Discord login initiated.');
-      break;
-    } catch (loginErr) {
-      logger.error({ err: loginErr }, `[Bot] Login attempt ${attempt}/${maxRetries} failed:`);
-      if (attempt < maxRetries) {
-        await client.destroy().catch(() => {});
-        await new Promise((res) => setTimeout(res, 5000));
-      }
-    }
+  // 5. Login Bot to Discord
+  try {
+    logger.info('[Bot] Logging into Discord...');
+    await client.login(config.DISCORD_TOKEN);
+    logger.info('[Bot] Discord login initiated.');
+  } catch (loginErr) {
+    logger.error({ err: loginErr }, '[Bot] Failed to login to Discord:');
   }
 
   // 6. Graceful Shutdown Handlers

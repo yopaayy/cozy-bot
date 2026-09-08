@@ -5,6 +5,7 @@ import {
   ChannelType,
   TextChannel,
   ChatInputCommandInteraction,
+  GuildMember,
 } from 'discord.js';
 import type { Command } from '../../../shared/types';
 import { verificationService } from '../../modules/verification/verification.service';
@@ -26,33 +27,42 @@ export const command: Command = {
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    if (!interaction.guild || !interaction.member) {
-      await interaction.reply({
-        embeds: [createErrorEmbed('Command hanya bisa digunakan di dalam server.')],
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    if (!isAdmin(member)) {
-      await interaction.reply({
-        embeds: [createErrorEmbed('Akses Ditolak', 'Hanya Administrator yang dapat menggunakan perintah ini.')],
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // 1. Defer immediately to prevent Discord interaction timeout
     await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild || !interaction.member) {
+      await interaction.editReply({
+        embeds: [createErrorEmbed('Command hanya bisa digunakan di dalam server.')],
+      });
+      return;
+    }
+
+    const member =
+      (interaction.member as GuildMember) ||
+      (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+
+    if (!member || !isAdmin(member)) {
+      await interaction.editReply({
+        embeds: [createErrorEmbed('Akses Ditolak', 'Hanya Administrator yang dapat menggunakan perintah ini.')],
+      });
+      return;
+    }
 
     try {
       const config = await verificationService.getConfig(interaction.guild.id);
-      const targetChannel =
-        (interaction.options.getChannel('channel') as TextChannel) ||
-        (config.channelId ? (interaction.guild.channels.cache.get(config.channelId) as TextChannel) : null) ||
-        (interaction.channel as TextChannel);
+      let targetChannel = interaction.options.getChannel('channel') as TextChannel | null;
 
-      if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
+      if (!targetChannel && config.channelId) {
+        targetChannel =
+          (interaction.guild.channels.cache.get(config.channelId) as TextChannel) ||
+          ((await interaction.guild.channels.fetch(config.channelId).catch(() => null)) as TextChannel);
+      }
+
+      if (!targetChannel) {
+        targetChannel = interaction.channel as TextChannel;
+      }
+
+      if (!targetChannel || !targetChannel.isTextBased()) {
         await interaction.editReply({
           embeds: [createErrorEmbed('Channel Tidak Valid', 'Channel tujuan tidak ditemukan atau bukan channel teks.')],
         });
@@ -72,10 +82,10 @@ export const command: Command = {
           ),
         ],
       });
-    } catch (err) {
+    } catch (err: any) {
       logger.error({ err }, '[Command:verify-panel] Error sending verification panel:');
       await interaction.editReply({
-        embeds: [createErrorEmbed('Gagal Mengirim Panel', 'Terjadi kesalahan saat mengirim panel verifikasi.')],
+        embeds: [createErrorEmbed('Gagal Mengirim Panel', err.message || 'Terjadi kesalahan saat mengirim panel verifikasi.')],
       });
     }
   },

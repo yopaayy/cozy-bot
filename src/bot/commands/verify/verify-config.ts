@@ -3,6 +3,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   ChatInputCommandInteraction,
+  GuildMember,
 } from 'discord.js';
 import type { Command } from '../../../shared/types';
 import { verificationService } from '../../modules/verification/verification.service';
@@ -19,24 +20,26 @@ export const command: Command = {
     ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    if (!interaction.guild || !interaction.member) {
-      await interaction.reply({
-        embeds: [createErrorEmbed('Command hanya bisa digunakan di dalam server.')],
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    if (!isStaff(member)) {
-      await interaction.reply({
-        embeds: [createErrorEmbed('Akses Ditolak', 'Hanya Staff/Admin yang dapat melihat konfigurasi.')],
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // 1. Defer immediately to prevent Discord interaction timeout
     await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild || !interaction.member) {
+      await interaction.editReply({
+        embeds: [createErrorEmbed('Command hanya bisa digunakan di dalam server.')],
+      });
+      return;
+    }
+
+    const member =
+      (interaction.member as GuildMember) ||
+      (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+
+    if (!member || !isStaff(member)) {
+      await interaction.editReply({
+        embeds: [createErrorEmbed('Akses Ditolak', 'Hanya Staff/Admin yang dapat melihat konfigurasi.')],
+      });
+      return;
+    }
 
     const config = await verificationService.getConfig(interaction.guild.id);
 
