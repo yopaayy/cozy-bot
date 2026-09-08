@@ -35,7 +35,12 @@ async function registerCommands() {
 
   for (const file of commandFiles) {
     try {
-      const module = await import(pathToFileURL(file).href);
+      let module: any;
+      try {
+        module = require(file);
+      } catch {
+        module = await import(pathToFileURL(file).href);
+      }
       const command: Command = module.default || module.command;
 
       if (command && command.data) {

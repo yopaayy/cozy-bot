@@ -1,6 +1,6 @@
 import dns from 'dns';
 try {
-  dns.setServers(['1.1.1.1', '8.8.8.8', '1.0.0.1', '8.8.4.4']);
+  dns.setServers(['8.8.8.8', '1.1.1.1', '1.0.0.1']);
   dns.setDefaultResultOrder('ipv4first');
 } catch (e) {
   // Ignore if not supported in environment
@@ -21,13 +21,22 @@ async function bootstrap() {
   logger.info(`  Guild ID: ${config.GUILD_ID}`);
   logger.info('=============================================');
 
-  // 1. Initialize Prisma Database Connection
-  try {
-    await prisma.$connect();
-    logger.info('[Database] Connected to MySQL successfully.');
-  } catch (dbError) {
-    logger.error({ err: dbError }, '[Database] Failed to connect to MySQL database:');
-    // Don't crash immediately; allow bot to log error and retry or continue
+  // 1. Initialize Prisma Database Connection with retry
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      await prisma.$connect();
+      logger.info('[Database] Connected to MySQL successfully.');
+      break;
+    } catch (dbError) {
+      retries--;
+      if (retries === 0) {
+        logger.error({ err: dbError }, '[Database] Failed to connect to MySQL database:');
+      } else {
+        logger.warn(`[Database] Connection attempt failed, retrying in 2s... (${retries} attempts left)`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
   }
 
   // 2. Initialize Discord Client

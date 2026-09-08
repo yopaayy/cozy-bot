@@ -69,10 +69,12 @@ export const event: Event<Events.MessageReactionAdd> = {
       if (parsedExpected && parsedExpected.id) {
         isMatch =
           fullReaction.emoji.id === parsedExpected.id ||
-          fullReaction.emoji.name === parsedExpected.name;
+          fullReaction.emoji.name?.toLowerCase() === parsedExpected.name?.toLowerCase();
       } else {
+        const cleanExpected = expectedEmoji.replace(/:/g, '').toLowerCase();
         isMatch =
           fullReaction.emoji.name === expectedEmoji ||
+          fullReaction.emoji.name?.toLowerCase() === cleanExpected ||
           fullReaction.emoji.toString() === expectedEmoji;
       }
 

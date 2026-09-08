@@ -73,10 +73,28 @@ export const command: Command = {
     const { parseEmoji } = await import('discord.js');
     const parsed = parseEmoji(rawEmoji);
     let emoji = rawEmoji;
+
+    // Fetch guild emojis to ensure cache is 100% fresh and populated
+    const guildEmojis = await interaction.guild.emojis.fetch().catch(() => null);
+
     if (parsed?.id) {
-      emoji = parsed.animated
+      const matchedEmoji = guildEmojis?.get(parsed.id);
+      const isAnimated = matchedEmoji ? matchedEmoji.animated : parsed.animated;
+      emoji = isAnimated
         ? `<a:${parsed.name}:${parsed.id}>`
         : `<:${parsed.name}:${parsed.id}>`;
+    } else if (rawEmoji !== '✅') {
+      const cleanName = rawEmoji.replace(/:/g, '').trim();
+      const matchedEmoji =
+        guildEmojis?.find((e) => e.name?.toLowerCase() === cleanName.toLowerCase() || e.id === cleanName) ||
+        interaction.guild.emojis.cache.find((e) => e.name?.toLowerCase() === cleanName.toLowerCase() || e.id === cleanName) ||
+        interaction.client.emojis.cache.find((e) => e.name?.toLowerCase() === cleanName.toLowerCase() || e.id === cleanName);
+
+      if (matchedEmoji) {
+        emoji = matchedEmoji.animated
+          ? `<a:${matchedEmoji.name}:${matchedEmoji.id}>`
+          : `<:${matchedEmoji.name}:${matchedEmoji.id}>`;
+      }
     }
 
     try {
@@ -100,10 +118,10 @@ export const command: Command = {
       );
 
       await interaction.editReply({ embeds: [successEmbed] });
-    } catch (err) {
+    } catch (err: any) {
       logger.error({ err }, '[Command:verify-setup] Failed to save config:');
       await interaction.editReply({
-        embeds: [createErrorEmbed('Gagal Menyimpan Setup', 'Terjadi kesalahan saat menyimpan pengaturan verifikasi.')],
+        embeds: [createErrorEmbed('Gagal Menyimpan Setup', `Terjadi kesalahan saat menyimpan pengaturan verifikasi: ${err?.message || 'Database error'}`)],
       });
     }
   },

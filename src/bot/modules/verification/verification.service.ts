@@ -1,5 +1,5 @@
 // src/bot/modules/verification/verification.service.ts
-import { Guild, GuildMember, TextChannel, Message } from 'discord.js';
+import { Guild, GuildMember, TextChannel, Message, EmbedBuilder } from 'discord.js';
 import { prisma } from '../../../shared/database';
 import { config } from '../../../shared/config';
 import { logger } from '../../../shared/logger';
@@ -123,6 +123,9 @@ export class VerificationService {
 
     logger.info(`[Verification] Successfully verified member ${member.user.tag} (${member.id})`);
 
+    // Update panel embed stats in background
+    this.updatePanelStats(guild).catch(() => null);
+
     return {
       alreadyVerified: false,
       success: true,
@@ -131,37 +134,111 @@ export class VerificationService {
   }
 
   /**
-   * Send or update the permanent verification panel embed in a channel
+   * Build consistent panel embed with real-time verified member stats
    */
-  async sendVerificationPanel(channel: TextChannel, emoji = '✅'): Promise<Message> {
-    const embed = createCozyEmbed(
+  buildPanelEmbed(emoji: string, totalVerified?: number): EmbedBuilder {
+    const verifiedStat = totalVerified !== undefined
+      ? `▸ 👥 **Total Terverifikasi**: \`${totalVerified}\` Member\n`
+      : '';
+
+    return createCozyEmbed(
       'Verifikasi untuk Masuk ke Cozy For Us 🤍',
       [
         'Halowww! Selamat datang di **Cozy For Us**.',
         '',
         `Silakan klik reaction ${emoji} di bawah ini untuk memverifikasi dirimu dan membuka akses ke seluruh channel komunitas kami!`,
         '',
+        verifiedStat,
         '▸ *Pastikan kamu membaca dan mematuhi peraturan server.*',
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
     );
+  }
+
+  /**
+   * Update the live verification panel embed with latest member stats
+   */
+  async updatePanelStats(guild: Guild): Promise<void> {
+    try {
+      const config = await this.getConfig(guild.id);
+      if (!config.channelId || !config.messageId) return;
+
+      const channel = (guild.channels.cache.get(config.channelId) || await guild.channels.fetch(config.channelId).catch(() => null)) as TextChannel | null;
+      if (!channel) return;
+
+      const message = await channel.messages.fetch(config.messageId).catch(() => null);
+      if (!message) return;
+
+      const verifiedRole = config.verifiedRoleId ? guild.roles.cache.get(config.verifiedRoleId) : null;
+      const totalVerified = verifiedRole
+        ? verifiedRole.members.size
+        : await prisma.users.count({ where: { isVerified: true } });
+
+      const updatedEmbed = this.buildPanelEmbed(config.emoji || '✅', totalVerified);
+      await message.edit({ embeds: [updatedEmbed] });
+      logger.info(`[Verification] Panel embed updated with total verified: ${totalVerified}`);
+    } catch (error) {
+      logger.debug({ err: error }, '[Verification] Could not update panel embed stats');
+    }
+  }
+
+  /**
+   * Send or update the permanent verification panel embed in a channel
+   */
+  async sendVerificationPanel(channel: TextChannel, emoji = '✅'): Promise<Message> {
+    const { parseEmoji } = await import('discord.js');
+    let resolvedEmoji = emoji;
+    let reactionTarget: any = emoji;
+
+    // Fetch guild emojis to ensure cache is 100% fresh and populated
+    const guildEmojis = await channel.guild.emojis.fetch().catch(() => null);
+
+    const parsed = parseEmoji(emoji);
+    if (parsed?.id && parsed.name) {
+      const matched = guildEmojis?.get(parsed.id);
+      const isAnimated = matched ? matched.animated : parsed.animated;
+      resolvedEmoji = isAnimated ? `<a:${parsed.name}:${parsed.id}>` : `<:${parsed.name}:${parsed.id}>`;
+      reactionTarget = `${parsed.name}:${parsed.id}`;
+    } else if (parsed?.id) {
+      const matched = guildEmojis?.get(parsed.id) || channel.client.emojis.cache.get(parsed.id);
+      if (matched) {
+        resolvedEmoji = matched.animated ? `<a:${matched.name}:${matched.id}>` : `<:${matched.name}:${matched.id}>`;
+        reactionTarget = `${matched.name}:${matched.id}`;
+      } else {
+        reactionTarget = parsed.id;
+      }
+    } else if (emoji !== '✅') {
+      const cleanName = emoji.replace(/:/g, '').trim();
+      const matched =
+        guildEmojis?.find((e) => e.name?.toLowerCase() === cleanName.toLowerCase() || e.id === cleanName) ||
+        channel.client.emojis.cache.find((e) => e.name?.toLowerCase() === cleanName.toLowerCase() || e.id === cleanName);
+      if (matched) {
+        resolvedEmoji = matched.animated ? `<a:${matched.name}:${matched.id}>` : `<:${matched.name}:${matched.id}>`;
+        reactionTarget = `${matched.name}:${matched.id}`;
+      }
+    }
+
+    const config = await this.getConfig(channel.guild.id);
+    const verifiedRole = config.verifiedRoleId ? channel.guild.roles.cache.get(config.verifiedRoleId) : null;
+    const totalVerified = verifiedRole
+      ? verifiedRole.members.size
+      : await prisma.users.count({ where: { isVerified: true } });
+
+    const embed = this.buildPanelEmbed(resolvedEmoji, totalVerified);
 
     const message = await channel.send({ embeds: [embed] });
     
     try {
-      const { parseEmoji } = await import('discord.js');
-      const parsed = parseEmoji(emoji);
-      const reactionTarget = parsed?.id ? parsed.id : emoji;
       await message.react(reactionTarget);
     } catch (reactError) {
-      logger.error({ err: reactError }, `[Verification] Failed to react with emoji: ${emoji}`);
-      throw new Error(`Gagal mereaksikan emoji ${emoji}. Pastikan bot memiliki izin "Use External Emojis" atau emoji berasal dari server ini.`);
+      logger.warn({ err: reactError }, `[Verification] Could not automatically add reaction ${resolvedEmoji} to panel message.`);
+      // We do not throw error so panel message & database config remain safely saved
     }
 
-    // Save messageId and channelId into database
+    // Save messageId, channelId and resolvedEmoji into database
     await this.updateConfig(channel.guild.id, {
       channelId: channel.id,
       messageId: message.id,
-      emoji,
+      emoji: resolvedEmoji,
     });
 
     logger.info(`[Verification] Verification panel published to #${channel.name} (${message.id})`);
