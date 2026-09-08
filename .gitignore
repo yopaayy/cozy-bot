@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment (NEVER commit!)
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+dashboard-out/
+.next/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+
+# Misc
+*.tgz
+.turbo

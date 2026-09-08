@@ -1,0 +1,47 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model users {
+  discordId   String   @id @map("discord_id") @db.VarChar(32)
+  username    String?  @db.VarChar(64)
+  isVerified  Boolean  @default(false) @map("is_verified")
+  joinedAt    DateTime @default(now()) @map("joined_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model guildConfig {
+  guildId             String   @id @map("guild_id") @db.VarChar(32)
+  verifyChannelId     String?  @map("verify_channel_id") @db.VarChar(32)
+  verifyEmoji         String?  @default("✅") @map("verify_emoji") @db.VarChar(32)
+  verifyMessageId     String?  @map("verify_message_id") @db.VarChar(32)
+  unverifiedRoleId    String?  @map("unverified_role_id") @db.VarChar(32)
+  verifiedRoleId      String?  @map("verified_role_id") @db.VarChar(32)
+  welcomeChannelId    String?  @map("welcome_channel_id") @db.VarChar(32)
+  goodbyeChannelId    String?  @map("goodbye_channel_id") @db.VarChar(32)
+  ticketLogChannelId  String?  @map("ticket_log_channel_id") @db.VarChar(32)
+  streakResetHour     Int      @default(0) @map("streak_reset_hour")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("guild_config")
+}
+
+model auditLog {
+  id              Int      @id @default(autoincrement())
+  actorDiscordId  String   @map("actor_discord_id") @db.VarChar(32)
+  action          String   @db.VarChar(64)
+  detail          String?  @db.Text
+  source          String   @default("discord_bot") @db.VarChar(32)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("audit_log")
+}
