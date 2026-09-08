@@ -9,16 +9,20 @@ export const event: Event<Events.ClientReady> = {
   execute: async (client) => {
     logger.info(`[Bot] Cozy Bot online as ${client.user?.tag}! 🤍`);
 
-    client.user?.setPresence({
-      activities: [
-        {
-          name: 'Cozy For Us 🤍',
-          type: ActivityType.Custom,
-          state: 'Vibing at Cozy For Us 🤍',
-        },
-      ],
-      status: 'online',
-    });
+    try {
+      client.user?.setPresence({
+        activities: [
+          {
+            name: 'Cozy For Us 🤍',
+            type: ActivityType.Custom,
+            state: 'Vibing at Cozy For Us 🤍',
+          },
+        ],
+        status: 'online',
+      });
+    } catch (presenceErr) {
+      logger.warn({ err: presenceErr }, '[Bot] Could not set presence:');
+    }
 
     // Fetch and cache verification panel messages across guilds
     try {

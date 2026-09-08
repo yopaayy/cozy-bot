@@ -62,9 +62,21 @@ export const event: Event<Events.MessageReactionAdd> = {
       }
 
       const expectedEmoji = config.emoji || '✅';
-      const actualEmoji = fullReaction.emoji.name;
+      const { parseEmoji } = await import('discord.js');
+      const parsedExpected = parseEmoji(expectedEmoji);
 
-      if (actualEmoji !== expectedEmoji) {
+      let isMatch = false;
+      if (parsedExpected && parsedExpected.id) {
+        isMatch =
+          fullReaction.emoji.id === parsedExpected.id ||
+          fullReaction.emoji.name === parsedExpected.name;
+      } else {
+        isMatch =
+          fullReaction.emoji.name === expectedEmoji ||
+          fullReaction.emoji.toString() === expectedEmoji;
+      }
+
+      if (!isMatch) {
         return;
       }
 

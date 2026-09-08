@@ -65,7 +65,16 @@ export const command: Command = {
     const channel = interaction.options.getChannel('channel', true);
     const unverifiedRole = interaction.options.getRole('unverified_role', true);
     const verifiedRole = interaction.options.getRole('verified_role', true);
-    const emoji = interaction.options.getString('emoji') || '✅';
+    const rawEmoji = (interaction.options.getString('emoji') || '✅').trim();
+
+    const { parseEmoji } = await import('discord.js');
+    const parsed = parseEmoji(rawEmoji);
+    let emoji = rawEmoji;
+    if (parsed?.id) {
+      emoji = parsed.animated
+        ? `<a:${parsed.name}:${parsed.id}>`
+        : `<:${parsed.name}:${parsed.id}>`;
+    }
 
     try {
       await verificationService.updateConfig(interaction.guild.id, {

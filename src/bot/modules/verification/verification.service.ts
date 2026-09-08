@@ -146,7 +146,16 @@ export class VerificationService {
     );
 
     const message = await channel.send({ embeds: [embed] });
-    await message.react(emoji);
+    
+    try {
+      const { parseEmoji } = await import('discord.js');
+      const parsed = parseEmoji(emoji);
+      const reactionTarget = parsed?.id ? parsed.id : emoji;
+      await message.react(reactionTarget);
+    } catch (reactError) {
+      logger.error({ err: reactError }, `[Verification] Failed to react with emoji: ${emoji}`);
+      throw new Error(`Gagal mereaksikan emoji ${emoji}. Pastikan bot memiliki izin "Use External Emojis" atau emoji berasal dari server ini.`);
+    }
 
     // Save messageId and channelId into database
     await this.updateConfig(channel.guild.id, {

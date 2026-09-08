@@ -43,7 +43,7 @@ async function bootstrap() {
     logger.error({ err: apiErr }, `[API] Failed to start Fastify server on port ${config.SERVER_PORT}:`);
   }
 
-  // 5. Login Bot to Discord with retry
+  // 5. Login Bot to Discord with clean retry
   const maxRetries = 5;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -54,7 +54,8 @@ async function bootstrap() {
     } catch (loginErr) {
       logger.error({ err: loginErr }, `[Bot] Login attempt ${attempt}/${maxRetries} failed:`);
       if (attempt < maxRetries) {
-        await new Promise((res) => setTimeout(res, 4000));
+        await client.destroy().catch(() => {});
+        await new Promise((res) => setTimeout(res, 5000));
       }
     }
   }
