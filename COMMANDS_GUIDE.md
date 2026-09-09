@@ -116,11 +116,22 @@ Minigame petualangan kucing menjelajah Cozy Cafe di dalam **Discord Components V
 
 ## ⚔️ 10. PvP Coinflip / Duels (`cduel` / `ccf @user <bet>`)
 
-Pertarungan duel lempar koin antar 2 pemain berhadapan secara langsung (**Player vs Player**) dengan taruhan seimbang (**Equal Wager**), persetujuan 2 belah pihak (**Mutual Consent**), dan sistem pemenang mengambil seluruh pot (**Winner Takes All**):
+Pertarungan duel lempar koin antar 2 pemain berhadapan secara langsung (**Player vs Player**) dengan taruhan seimbang (**Equal Wager**), persetujuan 2 belah pihak (**Mutual Consent**), sistem pemenang mengambil seluruh pot (**Winner Takes All**), serta tontonan **Live Battle Publik** yang seru bagi seluruh member server:
 
-| Command | Alias | Contoh Penggunaan | Aturan & Detail Permainan |
+| Command | Tipe Duel | Contoh Penggunaan | Aturan & Detail Permainan |
 | :--- | :--- | :--- | :--- |
-| `cduel <@user> <bet> [h\|t]`<br>atau<br>`ccf <@user> <bet> [h\|t]` | `cozyduel`, `cozy duel`, `ccoinflip @user <bet>` | `cduel @teman 50k`<br>`cduel 100k @teman`<br>`cduel @teman 50k h`<br>`ccf @teman 25000`<br>`ccf 100k @teman tails` | - **Taruhan Seimbang (Equal Wager):** Kedua pemain wajib mempertaruhkan nominal yang sama persis (`bet`). Total hadiah pemenang adalah **2x taruhan** ($2 \times \text{bet}$).<br>- **Persetujuan 2 Belah Pihak (Mutual Consent):**<br>&nbsp;&nbsp;• Penantang (Challenger) memicu tantangan duel.<br>&nbsp;&nbsp;• Lawan (Opponent) harus menyetujui dengan tombol **`[ ⚔️ Accept Duel (bet) ]`** atau menolak dengan **`[ 🏳️ Decline ]`**.<br>&nbsp;&nbsp;• Penantang dapat membatalkan tantangan dengan **`[ 🛑 Cancel ]`**.<br>&nbsp;&nbsp;• Member lain yang mencoba mengklik tombol akan ditolak dengan notifikasi ephemeral.<br>- **Pilihan Sisi Koin (Coin Sides):**<br>&nbsp;&nbsp;• Jika penantang memilih sisi (misal `h`), maka lawan otomatis mendapatkan sisi sebaliknya (`t`).<br>&nbsp;&nbsp;• Jika sisi tidak ditentukan (misal `cduel @teman 50k`), sisi koin akan dibagi secara acak 50/50 saat lawan menerima duel.<br>- **UI Embed Solid & Proporsional:**<br>&nbsp;&nbsp;• Frame Tantangan: Embed emas proporsional dengan nama & avatar penantang, info nominal, dan 3 tombol interaktif.<br>&nbsp;&nbsp;• Frame Animasi: Animasi koin berputar `<a:cozy_coinspin:id>` selama 1.5 detik.<br>&nbsp;&nbsp;• Frame Hasil: Embed hijau pemenang dengan mahkota 👑, avatar pemenang, koin hasil akhir `<:coin_heads:id>` / `<:coin_tails:id>`, nominal hadiah yang dimenangkan, serta saldo baru pemenang & pengurangan saldo yang kalah.<br>- **Keamanan Transaksi & Anti-Bug:**<br>&nbsp;&nbsp;• Registrasi Wajib: Kedua belah pihak wajib terdaftar (`creg`).<br>&nbsp;&nbsp;• Hanya Saldo Cash: Saldo Bank tidak bisa digunakan secara langsung.<br>&nbsp;&nbsp;• Atomic Transaction: Transaksi saldo dan pemenang diproses dalam satu transaksi database Prisma yang aman.<br>&nbsp;&nbsp;• Timeout 60 Detik: Otomatis kedaluwarsa jika lawan tidak merespons dalam 60 detik tanpa pengurangan koin sepeser pun. |
+| `cduel <bet> [h\|t]` | **Open Duel (Tantangan Terbuka)** | `cduel 50k`<br>`cduel 100k`<br>`cduel 250k h`<br>`cduel all` | **Tantangan Terbuka untuk Seluruh Server:**<br>• Siapa saja member server yang memiliki saldo Cash mencukupi dapat mengklik tombol **`[ ⚔️ Step Into The Ring (bet) ]`** untuk menerima tantangan dan bertarung langsung!<br>• Penantang dapat membatalkan kapan saja dengan **`[ 🛑 Cancel Duel ]`**.<br>• Tidak terkunci hanya pada 2 orang, membuka arena taruhan publik yang hidup dan seru! |
+| `cduel <@user> <bet> [h\|t]`<br>atau<br>`ccf <@user> <bet> [h\|t]` | **Direct Duel (Tantangan Spesifik)** | `cduel @teman 50k`<br>`cduel 100k @teman`<br>`cduel @teman 50k h`<br>`ccf @teman 25000`<br>`ccf 100k @teman tails` | **Tantangan Langsung Antar Teman:**<br>• Hanya target user yang dapat mengklik **`[ ⚔️ Accept Duel ]`** atau **`[ 🏳️ Decline ]`**.<br>• Penantang dapat membatalkan dengan **`[ 🛑 Cancel ]`**.<br>• Seluruh obrolan dapat melihat tantangan ini di channel secara publik. |
+
+### 🎬 Sensasi Live Battle 3-Stage & Pengumuman Juara Publik:
+1. **Stage 1 (Opening Clash - Instan):** Pintu arena tertutup! Referee melempar koin tinggi ke udara `<a:cozy_coinspin:id>`, menampilkan pilihan kedua petarung, total pot, dan sorakan penonton.
+2. **Stage 2 (Mid-Air Suspense - 1.5 Detik):** Koin mencapai puncak dan meluncur deras ke lantai arena! Ketegangan memuncak diiringi animasi koin berputar 3-kali lipat.
+3. **Stage 3 (Victory Climax - 1.5 Detik):** Koin mendarat dengan suara dentingan di sisi `<:coin_heads:id>` atau `<:coin_tails:id>`. Embed kemenangan emerald menampilkan mahkota 👑, avatar pemenang, nominal total pot yang dimenangkan, serta saldo terbaru.
+4. **📢 Public Victory Hype Broadcast:** Bot secara otomatis mengirimkan pesan perayaan publik di channel:
+   ```text
+   🎉 🏆 DUEL VICTORY! @Winner has triumphed over @Loser and claimed the 🪙 100,000 Cozy Cash pot! 🍿🔥
+   ```
+   Seluruh member di server dapat melihat hasil pertarungan, mengucapkan selamat, bereaksi emoji, dan memeriahkan arena!
 
 ---
 

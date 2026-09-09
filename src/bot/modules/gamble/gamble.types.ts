@@ -183,16 +183,17 @@ export interface PvPDuelSession {
   challengerUsername: string;
   challengerDisplayName: string;
   challengerAvatarUrl: string;
-  opponentId: string;
-  opponentUsername: string;
-  opponentDisplayName: string;
-  opponentAvatarUrl: string;
+  opponentId?: string;
+  opponentUsername?: string;
+  opponentDisplayName?: string;
+  opponentAvatarUrl?: string;
   bet: bigint;
   challengerChoice?: CoinflipSide;
   opponentChoice?: CoinflipSide;
   createdAt: number;
   timeoutHandle: NodeJS.Timeout;
   isBusy?: boolean;
+  isOpenDuel?: boolean;
 }
 
 export interface PvPDuelResult {

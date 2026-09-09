@@ -732,7 +732,9 @@ export function registerGambleComponents(client: CozyClient) {
         clearTimeout(duel.timeoutHandle);
         activeDuels.delete(duelId);
         userActiveDuel.delete(duel.challengerId);
-        userActiveDuel.delete(duel.opponentId);
+        if (duel.opponentId) {
+          userActiveDuel.delete(duel.opponentId);
+        }
 
         const cancelEmbed = new EmbedBuilder()
           .setColor(COLORS.DARK)
@@ -741,7 +743,11 @@ export function registerGambleComponents(client: CozyClient) {
             iconURL: duel.challengerAvatarUrl,
           })
           .setTitle('🛑 DUEL CANCELLED')
-          .setDescription(`The duel challenge was cancelled by <@${duel.challengerId}>. No Cozy Cash was deducted.`)
+          .setDescription(
+            duel.isOpenDuel
+              ? `The open duel challenge was cancelled by <@${duel.challengerId}>. No Cozy Cash was deducted.`
+              : `The duel challenge was cancelled by <@${duel.challengerId}>. No Cozy Cash was deducted.`
+          )
           .setFooter({ text: 'Cozy PvP Coinflip' })
           .setTimestamp();
 
@@ -750,6 +756,14 @@ export function registerGambleComponents(client: CozyClient) {
       }
 
       if (action === 'decline') {
+        if (duel.isOpenDuel) {
+          await interaction.followUp({
+            content: '❌ Open duels cannot be declined. Only the creator can cancel.',
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
+
         if (interaction.user.id !== duel.opponentId) {
           await interaction.followUp({
             content: `❌ Only the challenged opponent (<@${duel.opponentId}>) can decline this duel!`,
@@ -761,12 +775,14 @@ export function registerGambleComponents(client: CozyClient) {
         clearTimeout(duel.timeoutHandle);
         activeDuels.delete(duelId);
         userActiveDuel.delete(duel.challengerId);
-        userActiveDuel.delete(duel.opponentId);
+        if (duel.opponentId) {
+          userActiveDuel.delete(duel.opponentId);
+        }
 
         const declineEmbed = new EmbedBuilder()
           .setColor(COLORS.DARK)
           .setAuthor({
-            name: `${duel.opponentDisplayName} — Duel Declined`,
+            name: `${duel.opponentDisplayName || 'Opponent'} — Duel Declined`,
             iconURL: duel.opponentAvatarUrl,
           })
           .setTitle('🏳️ DUEL DECLINED')
@@ -779,21 +795,68 @@ export function registerGambleComponents(client: CozyClient) {
       }
 
       // action === 'accept'
-      if (interaction.user.id !== duel.opponentId) {
-        await interaction.followUp({
-          content: `❌ Only the challenged opponent (<@${duel.opponentId}>) can accept this duel!`,
-          ephemeral: true,
-        }).catch(() => null);
-        return;
-      }
+      if (duel.isOpenDuel) {
+        if (interaction.user.id === duel.challengerId) {
+          await interaction.followUp({
+            content: '🚫 You cannot accept your own open duel challenge!',
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
 
-      if (duel.isBusy) return;
-      duel.isBusy = true;
-      clearTimeout(duel.timeoutHandle);
+        const isUserReg = await gambleService.isUserRegistered(interaction.user.id);
+        if (!isUserReg) {
+          await interaction.followUp({
+            content: `🚫 | <@${interaction.user.id}>, you must register first using \`creg\` before participating in duels!`,
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
 
-      try {
-        // Verify opponent registration
-        const isOpponentReg = await gambleService.isUserRegistered(duel.opponentId);
+        if (userActiveDuel.has(interaction.user.id)) {
+          await interaction.followUp({
+            content: '🚫 You already have an active duel challenge pending! Finish or cancel it first.',
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
+
+        const userBal = await gambleService.getBalance(interaction.user.id, interaction.user.username);
+        if (userBal.cash < duel.bet) {
+          const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
+          await interaction.followUp({
+            content: `🚫 You don't have enough Cash to accept this duel! You need ${currencyEmoji} \`${formatCash(duel.bet)}\` (You have \`${formatCash(userBal.cash)}\`).`,
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
+
+        if (duel.isBusy) return;
+        duel.isBusy = true;
+        clearTimeout(duel.timeoutHandle);
+
+        const memberObj = interaction.member as any;
+        duel.opponentId = interaction.user.id;
+        duel.opponentUsername = interaction.user.username;
+        duel.opponentDisplayName = memberObj?.displayName || interaction.user.displayName || interaction.user.username;
+        duel.opponentAvatarUrl = memberObj?.displayAvatarURL?.() || interaction.user.displayAvatarURL();
+        userActiveDuel.set(interaction.user.id, duelId);
+
+      } else {
+        // Direct duel
+        if (interaction.user.id !== duel.opponentId) {
+          await interaction.followUp({
+            content: `❌ Only the challenged opponent (<@${duel.opponentId}>) can accept this duel!`,
+            ephemeral: true,
+          }).catch(() => null);
+          return;
+        }
+
+        if (duel.isBusy) return;
+        duel.isBusy = true;
+        clearTimeout(duel.timeoutHandle);
+
+        const isOpponentReg = await gambleService.isUserRegistered(duel.opponentId!);
         if (!isOpponentReg) {
           duel.isBusy = false;
           await interaction.followUp({
@@ -802,7 +865,9 @@ export function registerGambleComponents(client: CozyClient) {
           }).catch(() => null);
           return;
         }
+      }
 
+      try {
         // Assign sides if not already set
         if (!duel.challengerChoice) {
           const isHeads = Math.random() < 0.5;
@@ -815,7 +880,7 @@ export function registerGambleComponents(client: CozyClient) {
         // Execute atomic duel in database
         const result = await gambleService.executePvPDuel(
           duel.challengerId,
-          duel.opponentId,
+          duel.opponentId!,
           duel.bet,
           duel.challengerChoice,
           duel.opponentChoice,
@@ -826,7 +891,7 @@ export function registerGambleComponents(client: CozyClient) {
         if (!result.success) {
           activeDuels.delete(duelId);
           userActiveDuel.delete(duel.challengerId);
-          userActiveDuel.delete(duel.opponentId);
+          if (duel.opponentId) userActiveDuel.delete(duel.opponentId);
 
           let errMsg = '❌ The duel could not be completed due to an unexpected error.';
           if (result.error === 'CHALLENGER_INSUFFICIENT_FUNDS') {
@@ -849,60 +914,102 @@ export function registerGambleComponents(client: CozyClient) {
         // Clean up from active tracking maps
         activeDuels.delete(duelId);
         userActiveDuel.delete(duel.challengerId);
-        userActiveDuel.delete(duel.opponentId);
+        if (duel.opponentId) userActiveDuel.delete(duel.opponentId);
 
         const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
         const coinSpinEmoji = GambleAssets.getCoinSpin(interaction.guild);
 
-        // Frame 1: Coin spinning animation embed
+        // Frame 1: Opening Clash (Instant)
         const spinEmbed = new EmbedBuilder()
           .setColor(0xF1C40F as any)
-          .setTitle('🪙 COIN SPINNING IN THE AIR...')
+          .setTitle('⚔️ LIVE DUEL BATTLE — FIGHT IN PROGRESS! ⚔️')
+          .setAuthor({
+            name: `Arena Match: ${duel.challengerDisplayName} ⚔️ ${duel.opponentDisplayName}`,
+            iconURL: duel.challengerAvatarUrl,
+          })
           .setDescription(
-            `${coinSpinEmoji} Flipping coin between **${duel.challengerDisplayName}** and **${duel.opponentDisplayName}**...\n\n` +
-            `• <@${duel.challengerId}>: \`${duel.challengerChoice.toUpperCase()}\`\n` +
-            `• <@${duel.opponentId}>: \`${duel.opponentChoice.toUpperCase()}\`\n\n` +
-            `💰 **Total Pot**: ${currencyEmoji} **${formatCash(result.totalPot)} Cozy Cash**`
+            `🔔 **THE ARENA GATES SLAM SHUT! THE BATTLE IS LIVE!**\n\n` +
+            `👤 **${duel.challengerDisplayName}** (<@${duel.challengerId}>) — \`${duel.challengerChoice.toUpperCase()}\`\n` +
+            `⚔️ **VERSUS** ⚔️\n` +
+            `👤 **${duel.opponentDisplayName}** (<@${duel.opponentId}>) — \`${duel.opponentChoice.toUpperCase()}\`\n\n` +
+            `${coinSpinEmoji} **The referee flips the coin high into the arena rafters!**\n` +
+            `🪙 *The coin spins furiously against the arena lights...*\n\n` +
+            `💰 **Total Pot at Stake**: ${currencyEmoji} **${formatCash(result.totalPot)} Cozy Cash**\n` +
+            `🍿 *All eyes on the arena! Spectators, hold your breath!*`
           )
-          .setFooter({ text: 'May the odds be in your favor! • Cozy PvP Coinflip' });
+          .setFooter({ text: '⚡ Cozy PvP Arena • Coin Airborne • Live Spectating' });
 
         await interaction.message.edit({ embeds: [spinEmbed], components: [] }).catch(() => null);
 
-        // Frame 2: Outcome result after 1500ms
+        // Frame 2: Mid-Air Suspense (after 1500ms)
         setTimeout(async () => {
           try {
-            const outcomeEmoji = result.outcomeSide === 'heads'
-              ? GambleAssets.getCoinHeads(interaction.guild)
-              : GambleAssets.getCoinTails(interaction.guild);
-
-            const isChallengerWinner = result.winnerId === duel.challengerId;
-            const winnerDisplayName = isChallengerWinner ? duel.challengerDisplayName : duel.opponentDisplayName;
-            const loserDisplayName = isChallengerWinner ? duel.opponentDisplayName : duel.challengerDisplayName;
-            const winnerAvatar = isChallengerWinner ? duel.challengerAvatarUrl : duel.opponentAvatarUrl;
-
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
-            const resultEmbed = new EmbedBuilder()
-              .setColor(COLORS.SUCCESS)
+            const tensionEmbed = new EmbedBuilder()
+              .setColor(0xE67E22 as any)
+              .setTitle('🪙 THE COIN IS TUMBLING RAPIDLY... 🪙')
               .setAuthor({
-                name: `${winnerDisplayName} won the Duel! 🏆`,
-                iconURL: winnerAvatar,
+                name: `Arena Match: ${duel.challengerDisplayName} ⚔️ ${duel.opponentDisplayName}`,
+                iconURL: duel.challengerAvatarUrl,
               })
-              .setTitle(`🪙 PVP DUEL RESULT — ${result.outcomeSide.toUpperCase()}!`)
               .setDescription(
-                `${outcomeEmoji} The coin landed on **${result.outcomeSide.toUpperCase()}**!\n\n` +
-                `👑 **Winner**: <@${result.winnerId}> (**${winnerDisplayName}**)\n` +
-                `💀 **Loser**: <@${result.loserId}> (**${loserDisplayName}**)\n\n` +
-                `💰 **Prize Won**: ${currencyEmoji} **+${formatCash(result.totalPot)} Cozy Cash**\n` +
-                `📈 **${winnerDisplayName}'s New Cash**: \`${formatCash(result.winnerNewBalance)}\`\n` +
-                `📉 **${loserDisplayName}'s Loss**: \`-${formatCash(duel.bet)}\``
+                `🌪️ *The coin reaches peak altitude and starts plunging toward the arena floor!*\n\n` +
+                `• <@${duel.challengerId}> is praying for **${duel.challengerChoice!.toUpperCase()}**!\n` +
+                `• <@${duel.opponentId}> is praying for **${duel.opponentChoice!.toUpperCase()}**!\n\n` +
+                `${coinSpinEmoji} ${coinSpinEmoji} ${coinSpinEmoji}\n\n` +
+                `👀 *The crowd rises to their feet in deafening suspense...!*\n\n` +
+                `🏆 **Prize**: ${currencyEmoji} **${formatCash(result.totalPot)} Cozy Cash** (Winner Takes All)`
               )
-              .setFooter({ text: `Cozy PvP Coinflip • Fair 50/50 Duel • Today at ${timeStr}` });
+              .setFooter({ text: '⚡ Deciding Champion in 3... 2... 1...' });
 
-            await interaction.message.edit({ embeds: [resultEmbed], components: [] }).catch(() => null);
+            await interaction.message.edit({ embeds: [tensionEmbed], components: [] }).catch(() => null);
+
+            // Frame 3: Climax & Victory Reveal (after another 1500ms)
+            setTimeout(async () => {
+              try {
+                const outcomeEmoji = result.outcomeSide === 'heads'
+                  ? GambleAssets.getCoinHeads(interaction.guild)
+                  : GambleAssets.getCoinTails(interaction.guild);
+
+                const isChallengerWinner = result.winnerId === duel.challengerId;
+                const winnerDisplayName = isChallengerWinner ? duel.challengerDisplayName : duel.opponentDisplayName!;
+                const loserDisplayName = isChallengerWinner ? duel.opponentDisplayName! : duel.challengerDisplayName;
+                const winnerAvatar = isChallengerWinner ? duel.challengerAvatarUrl : duel.opponentAvatarUrl!;
+
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+                const resultEmbed = new EmbedBuilder()
+                  .setColor(COLORS.SUCCESS)
+                  .setAuthor({
+                    name: `${winnerDisplayName} won the Duel! 🏆`,
+                    iconURL: winnerAvatar,
+                  })
+                  .setTitle(`👑 ARENA CHAMPION CROWNED — LANDED ON ${result.outcomeSide.toUpperCase()}! 👑`)
+                  .setDescription(
+                    `${outcomeEmoji} **CLINK!** The coin settles firmly on **${result.outcomeSide.toUpperCase()}**!\n\n` +
+                    `🎉 👑 **CHAMPION**: <@${result.winnerId}> (**${winnerDisplayName}**)\n` +
+                    `💀 ⚔️ **VALIANT RUNNER-UP**: <@${result.loserId}> (**${loserDisplayName}**)\n\n` +
+                    `💰 **SPOILS OF WAR**: ${currencyEmoji} **+${formatCash(result.totalPot)} Cozy Cash**\n` +
+                    `📈 **${winnerDisplayName}'s New Balance**: \`${formatCash(result.winnerNewBalance)}\`\n` +
+                    `📉 **${loserDisplayName}'s Loss**: \`-${formatCash(duel.bet)}\`\n\n` +
+                    `🔥 *What an electrifying battle! The crowd roars for <@${result.winnerId}>!* 🍿👏`
+                  )
+                  .setFooter({ text: `Cozy PvP Arena • Match Concluded • Today at ${timeStr}` });
+
+                await interaction.message.edit({ embeds: [resultEmbed], components: [] }).catch(() => null);
+
+                // Public chat notification for the whole server to see
+                if (interaction.channel && 'send' in interaction.channel) {
+                  await (interaction.channel as any).send({
+                    content: `🎉 🏆 **DUEL VICTORY!** <@${result.winnerId}> has triumphed over <@${result.loserId}> and claimed the **${currencyEmoji} ${formatCash(result.totalPot)} Cozy Cash** pot! 🍿🔥`,
+                  }).catch(() => null);
+                }
+              } catch (err) {
+                logger.error({ err }, 'Error rendering PvP Duel victory frame:');
+              }
+            }, 1500);
           } catch (err) {
-            logger.error({ err }, 'Error rendering PvP Duel outcome frame:');
+            logger.error({ err }, 'Error rendering PvP Duel tension frame:');
           }
         }, 1500);
 
@@ -910,7 +1017,7 @@ export function registerGambleComponents(client: CozyClient) {
         duel.isBusy = false;
         activeDuels.delete(duelId);
         userActiveDuel.delete(duel.challengerId);
-        userActiveDuel.delete(duel.opponentId);
+        if (duel.opponentId) userActiveDuel.delete(duel.opponentId);
         logger.error({ err }, 'Error executing PvP Duel:');
       }
     },
@@ -2336,28 +2443,21 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       }
     }
 
+    const isOpenDuel = isDuelCommand && !targetUser;
+
     // A. PVP COINFLIP DUEL (If targetUser mentioned or if explicit duel command)
     if (isDuelCommand || targetUser) {
-      if (!targetUser) {
-        await message.reply({
-          content:
-            '❌ Format: `cduel <@user> <bet> [h|t]` atau `cduel <bet> <@user> [h|t]`\n' +
-            '(Contoh: `cduel @username 50k`, `cduel 100k @username h`, `ccf @username 50k`)',
-        });
-        return true;
-      }
-
-      if (targetUser.id === user.id) {
+      if (targetUser && targetUser.id === user.id) {
         await message.reply({ content: '🚫 | You cannot challenge yourself to a duel!' });
         return true;
       }
 
-      if (targetUser.bot) {
+      if (targetUser && targetUser.bot) {
         await message.reply({ content: '🚫 | You cannot challenge a bot to a duel!' });
         return true;
       }
 
-      // Check registration of both challenger and opponent
+      // Check registration of challenger
       const isChallengerReg = await gambleService.isUserRegistered(user.id);
       if (!isChallengerReg) {
         await message.reply({
@@ -2366,25 +2466,28 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         return true;
       }
 
-      const isOpponentReg = await gambleService.isUserRegistered(targetUser.id);
-      if (!isOpponentReg) {
-        await message.reply({
-          content: `🚫 | <@${targetUser.id}> is not registered in the economy and leveling system yet! They must register using \`creg\` before participating in duels.`,
-        });
-        return true;
+      // Check registration of opponent if direct duel
+      if (targetUser) {
+        const isOpponentReg = await gambleService.isUserRegistered(targetUser.id);
+        if (!isOpponentReg) {
+          await message.reply({
+            content: `🚫 | <@${targetUser.id}> is not registered in the economy and leveling system yet! They must register using \`creg\` before participating in duels.`,
+          });
+          return true;
+        }
+
+        if (userActiveDuel.has(targetUser.id)) {
+          await message.reply({
+            content: `🚫 | <@${targetUser.id}> is currently engaged in another duel challenge! Please wait for them to finish.`,
+          });
+          return true;
+        }
       }
 
-      // Check if either user is currently engaged in an active duel
+      // Check if challenger is already in an active duel
       if (userActiveDuel.has(user.id)) {
         await message.reply({
           content: `🚫 | **${displayName}**, you already have an active duel challenge pending! Please wait for it to conclude or cancel it first.`,
-        });
-        return true;
-      }
-
-      if (userActiveDuel.has(targetUser.id)) {
-        await message.reply({
-          content: `🚫 | <@${targetUser.id}> is currently engaged in another duel challenge! Please wait for them to finish.`,
         });
         return true;
       }
@@ -2394,7 +2497,7 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       let choiceToken: string | undefined;
 
       for (const token of rawTokens) {
-        if (token.includes(targetUser.id) || /<@!?\d+>/.test(token)) {
+        if (targetUser && (token.includes(targetUser.id) || /<@!?\d+>/.test(token))) {
           continue;
         }
         const lower = token.toLowerCase();
@@ -2408,8 +2511,12 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       if (!nominalToken) {
         await message.reply({
           content:
-            '❌ Format: `cduel <@user> <bet> [h|t]` atau `ccf <@user> <bet> [h|t]`\n' +
-            '(Contoh: `cduel @username 50k`, `cduel 100k @username h`, `ccf @username 50k`)',
+            '⚔️ **Cozy PvP Coinflip Duel**\n\n' +
+            '• **Open Duel (Siapa saja bisa terima)**: `cduel <bet> [h|t]`\n' +
+            '  *Contoh:* `cduel 50k` atau `cduel 100k h`\n\n' +
+            '• **Direct Duel (Tantang teman spesifik)**: `cduel <@user> <bet> [h|t]` atau `ccf <@user> <bet> [h|t]`\n' +
+            '  *Contoh:* `cduel @teman 50k` atau `ccf @teman 100k t`\n\n' +
+            '💡 *Kedua pemain mempertaruhkan nominal yang sama (Equal Wager), dan pemenang mengambil seluruh pot (Winner Takes All)!*',
         });
         return true;
       }
@@ -2445,12 +2552,14 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         return true;
       }
 
-      const opponentBalance = await gambleService.getBalance(targetUser.id, targetUser.username);
-      if (opponentBalance.cash < bet) {
-        await message.reply({
-          content: `🚫 | <@${targetUser.id}> does not have enough Cash to match your bet of ${currencyEmoji} \`${formatCash(bet)}\`! They currently have ${currencyEmoji} \`${formatCash(opponentBalance.cash)}\` in Cash.`,
-        });
-        return true;
+      if (targetUser) {
+        const opponentBalance = await gambleService.getBalance(targetUser.id, targetUser.username);
+        if (opponentBalance.cash < bet) {
+          await message.reply({
+            content: `🚫 | <@${targetUser.id}> does not have enough Cash to match your bet of ${currencyEmoji} \`${formatCash(bet)}\`! They currently have ${currencyEmoji} \`${formatCash(opponentBalance.cash)}\` in Cash.`,
+          });
+          return true;
+        }
       }
 
       let challengerChoice: CoinflipSide | undefined;
@@ -2460,11 +2569,15 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         opponentChoice = challengerChoice === 'heads' ? 'tails' : 'heads';
       }
 
-      const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
-      const targetDisplayName = targetMember?.displayName || targetUser.displayName || targetUser.username;
-      const challengerAvatar = member?.displayAvatarURL() || user.displayAvatarURL();
-      const opponentAvatar = targetMember?.displayAvatarURL() || targetUser.displayAvatarURL();
+      let targetDisplayName: string | undefined;
+      let opponentAvatar: string | undefined;
+      if (targetUser) {
+        const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+        targetDisplayName = targetMember?.displayName || targetUser.displayName || targetUser.username;
+        opponentAvatar = targetMember?.displayAvatarURL() || targetUser.displayAvatarURL();
+      }
 
+      const challengerAvatar = member?.displayAvatarURL() || user.displayAvatarURL();
       const duelId = crypto.randomUUID().slice(0, 8);
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -2474,12 +2587,18 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         if (!session) return;
         activeDuels.delete(duelId);
         userActiveDuel.delete(session.challengerId);
-        userActiveDuel.delete(session.opponentId);
+        if (session.opponentId) {
+          userActiveDuel.delete(session.opponentId);
+        }
 
         const expiredEmbed = new EmbedBuilder()
           .setColor(COLORS.DARK)
           .setTitle('⏳ DUEL CHALLENGE EXPIRED')
-          .setDescription(`The duel challenge between <@${session.challengerId}> and <@${session.opponentId}> expired without response. No Cozy Cash was deducted.`)
+          .setDescription(
+            session.isOpenDuel
+              ? `The open duel challenge by <@${session.challengerId}> for ${currencyEmoji} **${formatCash(session.bet)}** expired with no challengers stepping up. No Cozy Cash was deducted.`
+              : `The duel challenge between <@${session.challengerId}> and <@${session.opponentId}> expired without response. No Cozy Cash was deducted.`
+          )
           .setFooter({ text: 'Cozy PvP Coinflip' })
           .setTimestamp();
 
@@ -2501,8 +2620,8 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         challengerUsername: user.username,
         challengerDisplayName: displayName,
         challengerAvatarUrl: challengerAvatar,
-        opponentId: targetUser.id,
-        opponentUsername: targetUser.username,
+        opponentId: targetUser ? targetUser.id : undefined,
+        opponentUsername: targetUser ? targetUser.username : undefined,
         opponentDisplayName: targetDisplayName,
         opponentAvatarUrl: opponentAvatar,
         bet,
@@ -2510,48 +2629,88 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         opponentChoice,
         createdAt: Date.now(),
         timeoutHandle,
+        isOpenDuel,
       };
 
       activeDuels.set(duelId, session);
       userActiveDuel.set(user.id, duelId);
-      userActiveDuel.set(targetUser.id, duelId);
+      if (targetUser) {
+        userActiveDuel.set(targetUser.id, duelId);
+      }
 
-      const challengeEmbed = new EmbedBuilder()
-        .setColor(0xF1C40F as any)
-        .setAuthor({
-          name: `${displayName} has challenged ${targetDisplayName} to a Coinflip Duel!`,
-          iconURL: challengerAvatar,
-        })
-        .setTitle('⚔️ PVP COINFLIP DUEL')
-        .setDescription(
-          `**${displayName}** challenges **${targetDisplayName}** to an equal-wager Coinflip Duel!\n\n` +
-          `💰 **Wager (Each Player)**: ${currencyEmoji} **${formatCash(bet)} Cozy Cash**\n` +
-          `🏆 **Winner Takes All**: ${currencyEmoji} **${formatCash(bet * 2n)} Cozy Cash**\n\n` +
-          (challengerChoice
-            ? `🪙 **Challenger Picks**: \`${challengerChoice.toUpperCase()}\` (Opponent gets \`${opponentChoice!.toUpperCase()}\`)\n`
-            : `🪙 **Coin Sides**: *Will be randomly assigned (50/50) upon acceptance*\n`) +
-          `\n⏳ *<@${targetUser.id}>, click **Accept** to wager and roll the coin, or **Decline** to pass.*\n` +
-          `*(Challenge expires in 60s)*`
-        )
-        .setFooter({ text: `Cozy PvP Coinflip • Today at ${timeStr}` });
+      let challengeEmbed: EmbedBuilder;
+      let row: ActionRowBuilder<ButtonBuilder>;
 
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`cduel_accept_${duelId}`)
-          .setLabel(`Accept Duel (${formatCash(bet)})`)
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('⚔️'),
-        new ButtonBuilder()
-          .setCustomId(`cduel_decline_${duelId}`)
-          .setLabel('Decline')
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('🏳️'),
-        new ButtonBuilder()
-          .setCustomId(`cduel_cancel_${duelId}`)
-          .setLabel('Cancel')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('🛑'),
-      );
+      if (isOpenDuel) {
+        challengeEmbed = new EmbedBuilder()
+          .setColor(0xF1C40F as any)
+          .setAuthor({
+            name: `${displayName} has created an Open Coinflip Duel!`,
+            iconURL: challengerAvatar,
+          })
+          .setTitle('⚔️ OPEN COINFLIP DUEL — ARENA OPEN TO ALL! ⚔️')
+          .setDescription(
+            `🔥 **${displayName}** (<@${user.id}>) has placed an **Open Coinflip Wager** on the table!\n\n` +
+            `💰 **Wager (Per Player)**: ${currencyEmoji} **${formatCash(bet)} Cozy Cash**\n` +
+            `🏆 **Total Winner Pot**: ${currencyEmoji} **${formatCash(bet * 2n)} Cozy Cash**\n\n` +
+            (challengerChoice
+              ? `🪙 **Challenger Picks**: \`${challengerChoice.toUpperCase()}\` (First to accept gets \`${opponentChoice!.toUpperCase()}\`)\n`
+              : `🪙 **Coin Sides**: *Will be randomly assigned (50/50) upon acceptance*\n`) +
+            `\n📢 **ANYONE in the server with at least ${currencyEmoji} \`${formatCash(bet)}\` in Cash can step up!**\n` +
+            `*(Challenge expires in 60s)*`
+          )
+          .setFooter({ text: `Cozy PvP Arena • Open Challenge • Today at ${timeStr}` });
+
+        row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`cduel_accept_${duelId}`)
+            .setLabel(`Step Into The Ring (${formatCash(bet)})`)
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('⚔️'),
+          new ButtonBuilder()
+            .setCustomId(`cduel_cancel_${duelId}`)
+            .setLabel('Cancel Duel')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🛑'),
+        );
+      } else {
+        challengeEmbed = new EmbedBuilder()
+          .setColor(0xF1C40F as any)
+          .setAuthor({
+            name: `${displayName} has challenged ${targetDisplayName} to a Coinflip Duel!`,
+            iconURL: challengerAvatar,
+          })
+          .setTitle('⚔️ PVP COINFLIP DUEL')
+          .setDescription(
+            `**${displayName}** challenges **${targetDisplayName}** to an equal-wager Coinflip Duel!\n\n` +
+            `💰 **Wager (Each Player)**: ${currencyEmoji} **${formatCash(bet)} Cozy Cash**\n` +
+            `🏆 **Winner Takes All**: ${currencyEmoji} **${formatCash(bet * 2n)} Cozy Cash**\n\n` +
+            (challengerChoice
+              ? `🪙 **Challenger Picks**: \`${challengerChoice.toUpperCase()}\` (Opponent gets \`${opponentChoice!.toUpperCase()}\`)\n`
+              : `🪙 **Coin Sides**: *Will be randomly assigned (50/50) upon acceptance*\n`) +
+            `\n⏳ *<@${targetUser!.id}>, click **Accept** to wager and roll the coin, or **Decline** to pass.*\n` +
+            `*(Challenge expires in 60s)*`
+          )
+          .setFooter({ text: `Cozy PvP Coinflip • Today at ${timeStr}` });
+
+        row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`cduel_accept_${duelId}`)
+            .setLabel(`Accept Duel (${formatCash(bet)})`)
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('⚔️'),
+          new ButtonBuilder()
+            .setCustomId(`cduel_decline_${duelId}`)
+            .setLabel('Decline')
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji('🏳️'),
+          new ButtonBuilder()
+            .setCustomId(`cduel_cancel_${duelId}`)
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🛑'),
+        );
+      }
 
       const sentMsg = await message.reply({
         embeds: [challengeEmbed],
