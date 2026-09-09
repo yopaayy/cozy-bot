@@ -114,4 +114,40 @@ export const GambleAssets = {
   getCoinTails(guild?: Guild | null): string {
     return findGuildEmoji(guild, 'coin_tails') || FALLBACK_EMOJIS.COIN_TAILS;
   },
+
+  /**
+   * Cozy Cat Walk emojis (uploaded custom emojis with Unicode fallbacks)
+   */
+  getCatWalk(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_walk') || '🐱';
+  },
+  getCatTile(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_tile') || '🟩';
+  },
+  getCatPaw(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_paw') || '🐾';
+  },
+  getCatFish(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_fish') || '🐟';
+  },
+  getCatYarn(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_yarn') || '🧶';
+  },
+  getCatObstacle(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_obstacle') || '🥒';
+  },
+  getCatPoof(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_poof') || '💥';
+  },
+  getCatTileFail(guild?: Guild | null): string {
+    return findGuildEmoji(guild, 'cat_tile_fail') || '🟥';
+  },
+  getCatTrailItem(stepIndex: number, guild?: Guild | null): string {
+    const items = [
+      this.getCatPaw(guild),
+      this.getCatFish(guild),
+      this.getCatYarn(guild),
+    ];
+    return items[stepIndex % items.length];
+  },
 };

@@ -3,6 +3,8 @@ import { logger } from '../../../shared/logger';
 import { SlotsEngine } from './engines/SlotsEngine';
 import { MinesEngine } from './engines/MinesEngine';
 import { CoinflipEngine } from './engines/CoinflipEngine';
+import { CatWalkEngine } from './engines/CatWalkEngine';
+import { GambleAssets } from './gamble.assets';
 import { parseNominal } from './gamble.utils';
 import crypto from 'crypto';
 import type {
@@ -17,6 +19,9 @@ import type {
   MinesCashOutResult,
   CoinflipResult,
   CoinflipSide,
+  CatWalkSession,
+  CatWalkStepResult,
+  CatWalkCashOutResult,
 } from './gamble.types';
 
 const PROFESSIONS = [
@@ -52,12 +57,15 @@ export class GambleService {
   private slotsEngine: SlotsEngine;
   private minesEngine: MinesEngine;
   private coinflipEngine: CoinflipEngine;
+  private catWalkEngine: CatWalkEngine;
   public activeMinesGames = new Map<string, MinesGameSession>();
+  public activeCatWalkGames = new Map<string, CatWalkSession>();
 
   constructor() {
     this.slotsEngine = new SlotsEngine();
     this.minesEngine = new MinesEngine({ totalTiles: 9, minMines: 1, maxMines: 8, rtp: 0.9334 });
     this.coinflipEngine = new CoinflipEngine();
+    this.catWalkEngine = new CatWalkEngine();
   }
 
   /**
@@ -925,6 +933,254 @@ export class GambleService {
         newBalance: updated.cozyCash,
       };
     });
+  }
+  /**
+   * Get an active CatWalk game session by user ID
+   */
+  public getCatWalkGame(userId: string): CatWalkSession | undefined {
+    return this.activeCatWalkGames.get(userId);
+  }
+
+  /**
+   * Get next payout projection for CatWalk
+   */
+  public getNextCatWalkPayout(session: CatWalkSession): { nextMultiplier: number; nextPayout: bigint; hasNext: boolean } {
+    const nextStep = session.currentStep + 1;
+    if (nextStep > session.totalSteps) {
+      return { nextMultiplier: session.multiplier, nextPayout: session.payout, hasNext: false };
+    }
+    const nextMultiplier = this.catWalkEngine.calculateMultiplier(nextStep);
+    const nextPayout = this.catWalkEngine.calculatePayout(session.bet, nextMultiplier);
+    return { nextMultiplier, nextPayout, hasNext: true };
+  }
+
+  /**
+   * Start a new Cozy CatWalk game session
+   */
+  public async startCatWalk(
+    discordId: string,
+    betInput: string | number | bigint,
+    username?: string | null,
+    displayName?: string | null,
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    session?: CatWalkSession;
+    userCash?: bigint;
+    minBet?: bigint;
+    maxBet?: bigint;
+  }> {
+    await this.ensureUser(discordId, username);
+
+    if (this.activeCatWalkGames.has(discordId)) {
+      return { success: false, error: 'ACTIVE_GAME_EXISTS' };
+    }
+
+    const user = await this.getBalance(discordId, username);
+    const parsedBet = parseNominal(betInput);
+    if (!parsedBet.valid) {
+      return { success: false, error: 'INVALID_BET_FORMAT', userCash: user.cash };
+    }
+
+    const minBet = 1n;
+    const maxBet = 250000n;
+    let bet = parsedBet.isAll ? user.cash : (parsedBet.amount || 0n);
+
+    if (bet < minBet) {
+      return { success: false, error: 'BET_TOO_LOW', minBet, userCash: user.cash };
+    }
+    if (bet > maxBet) {
+      bet = maxBet;
+    }
+    if (user.cash < bet || user.cash <= 0n) {
+      return { success: false, error: 'INSUFFICIENT_FUNDS', userCash: user.cash };
+    }
+
+    // Deduct bet atomically from cozyCash
+    await withDbRetry(async () => {
+      await prisma.users.update({
+        where: { discordId },
+        data: { cozyCash: { decrement: bet } },
+      });
+    });
+
+    const session: CatWalkSession = {
+      gameId: crypto.randomUUID(),
+      userId: discordId,
+      username: username || 'Player',
+      displayName: displayName || username || 'Player',
+      bet,
+      currentStep: 0,
+      totalSteps: 10,
+      multiplier: 0,
+      payout: 0n,
+      isGameOver: false,
+      isCashedOut: false,
+      hitObstacle: false,
+      trailItems: [],
+      channelId: '',
+      startedAt: Date.now(),
+      lastActionAt: Date.now(),
+      isBusy: false,
+    };
+
+    this.activeCatWalkGames.set(discordId, session);
+    return { success: true, session };
+  }
+
+  /**
+   * Step on the next tile in Cozy CatWalk
+   */
+  public async stepCatWalk(
+    discordId: string,
+    guild?: any,
+  ): Promise<CatWalkStepResult | null> {
+    const session = this.activeCatWalkGames.get(discordId);
+    if (!session || session.isGameOver || session.isCashedOut || session.isBusy) return null;
+
+    session.isBusy = true;
+    session.lastActionAt = Date.now();
+
+    const success = this.catWalkEngine.rollStep();
+
+    if (!success) {
+      session.hitObstacle = true;
+      session.isGameOver = true;
+      if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+      this.activeCatWalkGames.delete(discordId);
+
+      return {
+        hitObstacle: true,
+        step: session.currentStep,
+        multiplier: 0,
+        payout: 0n,
+        isGameOver: true,
+        isMaxWin: false,
+      };
+    }
+
+    // Step succeeded!
+    session.currentStep += 1;
+    session.multiplier = this.catWalkEngine.calculateMultiplier(session.currentStep);
+    session.payout = this.catWalkEngine.calculatePayout(session.bet, session.multiplier);
+
+    // Record trail item
+    const trailItem = GambleAssets.getCatTrailItem(session.currentStep - 1, guild);
+    session.trailItems.push(trailItem);
+
+    // If reached 10th step (MAX WIN):
+    if (session.currentStep >= session.totalSteps) {
+      session.isGameOver = true;
+      session.isCashedOut = true;
+      if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+      await withDbRetry(async () => {
+        await prisma.users.update({
+          where: { discordId },
+          data: { cozyCash: { increment: session.payout } },
+        });
+      });
+
+      this.activeCatWalkGames.delete(discordId);
+
+      return {
+        hitObstacle: false,
+        step: session.currentStep,
+        multiplier: session.multiplier,
+        payout: session.payout,
+        isGameOver: true,
+        isMaxWin: true,
+      };
+    }
+
+    session.isBusy = false;
+    return {
+      hitObstacle: false,
+      step: session.currentStep,
+      multiplier: session.multiplier,
+      payout: session.payout,
+      isGameOver: false,
+      isMaxWin: false,
+    };
+  }
+
+  /**
+   * Cash out current CatWalk game
+   */
+  public async cashOutCatWalk(discordId: string): Promise<CatWalkCashOutResult> {
+    const session = this.activeCatWalkGames.get(discordId);
+    if (!session || session.isGameOver || session.isCashedOut || session.currentStep === 0 || session.isBusy) {
+      return {
+        success: false,
+        error: 'NO_ACTIVE_GAME',
+        payout: 0n,
+        profit: 0n,
+        multiplier: 0,
+        step: 0,
+        newBalance: 0n,
+      };
+    }
+
+    session.isGameOver = true;
+    session.isCashedOut = true;
+    if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+    const payout = session.payout;
+    const profit = payout - session.bet;
+
+    const updated = await withDbRetry(async () => {
+      return prisma.users.update({
+        where: { discordId },
+        data: { cozyCash: { increment: payout } },
+      });
+    });
+
+    this.activeCatWalkGames.delete(discordId);
+
+    return {
+      success: true,
+      payout,
+      profit,
+      multiplier: session.multiplier,
+      step: session.currentStep,
+      newBalance: updated.cozyCash,
+    };
+  }
+
+  /**
+   * Auto expire or safe cashout CatWalk on 2-minute inactivity
+   */
+  public async expireCatWalk(discordId: string): Promise<{ cashedOut: boolean; payout: bigint }> {
+    const session = this.activeCatWalkGames.get(discordId);
+    if (!session || session.isGameOver || session.isCashedOut) {
+      return { cashedOut: false, payout: 0n };
+    }
+
+    session.isGameOver = true;
+    session.isCashedOut = true;
+    if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+    if (session.currentStep > 0) {
+      const payout = session.payout;
+      await withDbRetry(async () => {
+        await prisma.users.update({
+          where: { discordId },
+          data: { cozyCash: { increment: payout } },
+        });
+      });
+      this.activeCatWalkGames.delete(discordId);
+      return { cashedOut: true, payout };
+    } else {
+      // Refund bet if no step was taken
+      await withDbRetry(async () => {
+        await prisma.users.update({
+          where: { discordId },
+          data: { cozyCash: { increment: session.bet } },
+        });
+      });
+      this.activeCatWalkGames.delete(discordId);
+      return { cashedOut: false, payout: session.bet };
+    }
   }
 }
 

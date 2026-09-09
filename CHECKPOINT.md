@@ -11,11 +11,11 @@
 | Item | Status |
 |---|---|
 | **Fase Saat Ini** | Modul Ekstensi — Economy & Minigames System |
-| **Tahap Aktif** | Tahap 1, 2, & 3 Selesai `🟢` + Cozy Send Confirmation System Selesai `🟢` |
+| **Tahap Aktif** | Tahap 1, 2, & 3 `🟢` + Cozy Send `🟢` + Cozy Giveaway `🟢` + Cozy Cat Walk `🟢` |
 | **Terakhir Dikerjakan Oleh** | Antigravity AI |
 | **Tanggal Update Terakhir** | 2026-09-09 |
 | **Blocker** | Tidak ada |
-| **Next Action** | Deployment ke Hosting Pterodactyl & Transisi ke Fase 2: Welcome & Goodbye System |
+| **Next Action** | Testing in-game Cozy Cat Walk di server & Next Minigames / Deployment |
 
 ---
 

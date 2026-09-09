@@ -377,6 +377,140 @@ describe('GambleService', () => {
       });
     });
   });
+
+  describe('Cozy Cat Walk (startCatWalk, stepCatWalk, cashOutCatWalk, expireCatWalk)', () => {
+    it('should start a Cat Walk game and deduct bet from cash wallet', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({
+        discordId: 'user-cat1',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'user-cat1',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'user-cat1',
+        cozyCash: 40000n,
+      });
+
+      const startRes = await service.startCatWalk('user-cat1', '10k', 'catlover');
+      expect(startRes.success).toBe(true);
+      expect(startRes.session).toBeDefined();
+      expect(startRes.session!.bet).toBe(10000n);
+      expect(startRes.session!.currentStep).toBe(0);
+      expect(startRes.session!.totalSteps).toBe(10);
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'user-cat1' },
+        data: { cozyCash: { decrement: 10000n } },
+      });
+
+      // Cannot start another game while active
+      const secondStart = await service.startCatWalk('user-cat1', 1000);
+      expect(secondStart.success).toBe(false);
+      expect(secondStart.error).toBe('ACTIVE_GAME_EXISTS');
+    });
+
+    it('should step forward successfully and cash out with profit', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({
+        discordId: 'user-cat2',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'user-cat2',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'user-cat2',
+        cozyCash: 40000n,
+      });
+
+      await service.startCatWalk('user-cat2', 10000, 'catlover2');
+
+      // Mock rollStep to succeed (1.17x)
+      vi.spyOn((service as any).catWalkEngine, 'rollStep').mockReturnValueOnce(true);
+
+      const stepRes = await service.stepCatWalk('user-cat2');
+      expect(stepRes).not.toBeNull();
+      expect(stepRes!.hitObstacle).toBe(false);
+      expect(stepRes!.step).toBe(1);
+      expect(stepRes!.multiplier).toBe(1.17);
+      expect(stepRes!.payout).toBe(11700n);
+
+      // Cash out
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'user-cat2',
+        cozyCash: 51700n,
+      });
+
+      const cashOutRes = await service.cashOutCatWalk('user-cat2');
+      expect(cashOutRes.success).toBe(true);
+      expect(cashOutRes.payout).toBe(11700n);
+      expect(cashOutRes.profit).toBe(1700n);
+      expect(cashOutRes.newBalance).toBe(51700n);
+      expect(service.getCatWalkGame('user-cat2')).toBeUndefined();
+    });
+
+    it('should handle obstacle failure and mark game over', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({
+        discordId: 'user-cat3',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'user-cat3',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'user-cat3',
+        cozyCash: 40000n,
+      });
+
+      await service.startCatWalk('user-cat3', 10000, 'catlover3');
+
+      // Mock rollStep to fail
+      vi.spyOn((service as any).catWalkEngine, 'rollStep').mockReturnValueOnce(false);
+
+      const stepRes = await service.stepCatWalk('user-cat3');
+      expect(stepRes).not.toBeNull();
+      expect(stepRes!.hitObstacle).toBe(true);
+      expect(stepRes!.isGameOver).toBe(true);
+      expect(stepRes!.payout).toBe(0n);
+      expect(service.getCatWalkGame('user-cat3')).toBeUndefined();
+    });
+
+    it('should refund bet on timeout if step 0', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({
+        discordId: 'user-cat4',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'user-cat4',
+        cozyCash: 50000n,
+        cozyBank: 0n,
+      });
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'user-cat4',
+        cozyCash: 40000n,
+      });
+
+      await service.startCatWalk('user-cat4', 10000, 'catlover4');
+
+      const expireRes = await service.expireCatWalk('user-cat4');
+      expect(expireRes.cashedOut).toBe(false);
+      expect(expireRes.payout).toBe(10000n);
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'user-cat4' },
+        data: { cozyCash: { increment: 10000n } },
+      });
+      expect(service.getCatWalkGame('user-cat4')).toBeUndefined();
+    });
+  });
 });
 
 

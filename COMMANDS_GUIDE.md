@@ -106,6 +106,16 @@ Minigame lempar koin cepat dengan animasi koin berputar dan emoji kustom server 
 
 ---
 
+## 🐾 9. Cozy Cat Walk (`ccat` / `cwalk` / `cozycat` / `cozywalk`)
+
+Minigame petualangan kucing menjelajah Cozy Cafe di dalam **Discord Components V2 Container** dengan grid visual 10 langkah (2 baris x 5 petak) dan aset kustom animasi:
+
+| Command | Alias | Contoh Format | Aturan & Detail Permainan |
+| :--- | :--- | :--- | :--- |
+| `ccat <bet>` | `cwalk`, `cozycat`, `cozywalk`, `catwalk`, `ccatwalk` | `ccat 10`<br>`ccat 10k`<br>`ccat 50000`<br>`ccat all`<br>`cwalk 100k` | - **Jalur Linear 10 Langkah (2 Baris x 5 Tile):**<br>&nbsp;&nbsp;• Baris 1: Petak 0 s/d 4<br>&nbsp;&nbsp;• Baris 2: Petak 5 s/d 9<br>- **Peluang & Multiplier (Matematika Presisi OwO):**<br>&nbsp;&nbsp;• Peluang Sukses: **80.00%** per langkah (Failure Chance: 20.00%)<br>&nbsp;&nbsp;• Multiplier Bertingkat: `1.17x` ➜ `1.47x` ➜ `1.84x` ➜ `2.29x` ➜ `2.87x` ➜ `3.59x` ➜ `4.48x` ➜ `5.60x` ➜ `7.00x` ➜ `8.75x` (MAX WIN)<br>- **Aset Kustom Server (8 Emoji):**<br>&nbsp;&nbsp;• `<a:cat_walk:id>`: Karakter kucing berjalan di posisi aktif saat ini.<br>&nbsp;&nbsp;• `<:cat_tile:id>`: Petak aman hijau yang belum diinjak.<br>&nbsp;&nbsp;• `<a:cat_paw:id>`, `<a:cat_fish:id>`, `<:cat_yarn:id>`: Jejak bergantian tapak kaki, ikan camilan, dan bola benang.<br>&nbsp;&nbsp;• `<:cat_obstacle:id>` & `<a:cat_poof:id>`: Obstacle dan efek poof ketika kucing kaget/gagal.<br>&nbsp;&nbsp;• `<:cat_tile_fail:id>`: Petak merah gagal untuk sisa jalur.<br>- **Discord Components V2 Solid UI:**<br>&nbsp;&nbsp;• Aksen border dinamis: Blurple (`#5865F2`) saat mulai, Hijau (`#57F287`) saat langkah sukses / cash out, Merah (`#ED4245`) saat kalah.<br>&nbsp;&nbsp;• Tombol `[ 🐾 Step (+gain) ]` (Primary) & `[ 💵 Cash Out: payout ]` (Success).<br>- **Keamanan & Mutex Guard:** Anti-spam rapid clicking lock (`isBusy`), user-exclusive guard, dan auto cashout / refund pada timeout 2 menit tanpa aksi. |
+
+---
+
 ## 🚀 Urutan Rekomendasi Skenario Uji Coba:
 
 1. Jalankan bot di terminal Anda:
@@ -123,8 +133,8 @@ Minigame lempar koin cepat dengan animasi koin berputar dan emoji kustom server 
 10. Coba bekerja: `cwork`.
 11. Mainkan mesin slot: `cslot 5000` atau `cozyslot 50` ➜ Perhatikan animasi reel berputar 4-frame bergantian hingga hasil akhir keluar.
 12. Cek papan peringkat: `ctop`.
-13. Mainkan Cozy Mines: `cmines 10k 3` atau `cmines 250000 3` ➜ Perhatikan tampilan Components V2 Container solid bergaris samping warna dinamis (Dark saat main, Hijau saat menang, Merah saat kalah)!
-14. Mainkan Cozy Coinflip:
-    - Coba tanpa memilih sisi: `ccf 2` atau `ccf 10k` ➜ Perhatikan bot otomatis memilihkan sisi untuk Anda dan koin `<a:cozy_coinspin:ID>` berputar selama 1.2 detik sebelum hasil akhir keluar!
-    - Coba dengan memilih sisi: `ccf 20k h` atau `ccoinflip 50k tails` ➜ Pastikan pilihan sisi dihormati sesuai tebakan Anda!
+13. Mainkan Cozy Mines: `cmines 10k 3` atau `cmines 250000 3` ➜ Perhatikan tampilan Components V2 Container solid bergaris samping warna dinamis!
+14. Mainkan Cozy Coinflip: `ccf 10k` atau `ccf 20k h` ➜ Animasi koin berputar 1.2s.
+15. Mainkan Cozy Cat Walk: `ccat 10k` atau `cwalk 50000` ➜ Perhatikan kucing `<a:cat_walk:id>` berdiri di petak 0 dengan 9 petak `<:cat_tile:id>`, klik tombol `[ 🐾 Step (+1,700) ]` untuk melangkah meninggalkan jejak paw/fish/yarn, dan klik `[ 💵 Cash Out: 11,700 ]` untuk mengamankan keuntungan!
+
 

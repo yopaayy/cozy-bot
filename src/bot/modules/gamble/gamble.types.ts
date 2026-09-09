@@ -134,4 +134,45 @@ export interface CoinflipResult {
   newBalance: bigint;
 }
 
+export interface CatWalkSession {
+  gameId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  bet: bigint;
+  currentStep: number;
+  totalSteps: number;
+  multiplier: number;
+  payout: bigint;
+  isGameOver: boolean;
+  isCashedOut: boolean;
+  hitObstacle: boolean;
+  trailItems: string[];
+  channelId: string;
+  messageId?: string;
+  startedAt: number;
+  lastActionAt: number;
+  isBusy: boolean;
+  timeoutHandle?: any;
+}
+
+export interface CatWalkStepResult {
+  hitObstacle: boolean;
+  step: number;
+  multiplier: number;
+  payout: bigint;
+  isGameOver: boolean;
+  isMaxWin: boolean;
+}
+
+export interface CatWalkCashOutResult {
+  success: boolean;
+  error?: string;
+  payout: bigint;
+  profit: bigint;
+  multiplier: number;
+  step: number;
+  newBalance: bigint;
+}
+
 

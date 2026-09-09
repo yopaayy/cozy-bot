@@ -8,13 +8,14 @@ import {
   TextDisplayBuilder,
   SeparatorBuilder,
   MessageFlags,
+  Guild,
 } from 'discord.js';
 import type { CozyClient } from '../../client';
 import { gambleService } from './gamble.service';
 import { GambleAssets } from './gamble.assets';
 import { SlotsEngine } from './engines/SlotsEngine';
 import { formatCash, parseNominal } from './gamble.utils';
-import type { MinesGameSession } from './gamble.types';
+import type { MinesGameSession, CatWalkSession } from './gamble.types';
 import { COLORS, BOT_DEFAULTS } from '../../../shared/constants';
 import { config } from '../../../shared/config';
 import { logger } from '../../../shared/logger';
@@ -347,6 +348,108 @@ export function registerGambleComponents(client: CozyClient) {
         flags: MessageFlags.IsComponentsV2,
         components: [container.toJSON()] as any,
       });
+    },
+  });
+
+  // Global button listener for CatWalk Step click
+  client.buttons.set(/^ccat_step_/, {
+    customId: /^ccat_step_/,
+    execute: async (interaction) => {
+      const match = interaction.customId.match(/^ccat_step_(\d+)$/);
+      if (!match) return;
+
+      const targetUserId = match[1];
+
+      if (interaction.user.id !== targetUserId) {
+        await interaction.reply({
+          content: '❌ This is not your Cat Walk game!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const session = gambleService.getCatWalkGame(targetUserId);
+      if (!session || session.isGameOver || session.isCashedOut) {
+        await interaction.reply({
+          content: '❌ This Cat Walk game is no longer active!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (session.isBusy) {
+        return;
+      }
+      session.isBusy = true;
+
+      await interaction.deferUpdate();
+
+      try {
+        const stepRes = await gambleService.stepCatWalk(targetUserId, interaction.guild);
+        if (!stepRes) return;
+
+        const container = renderCatWalkContainer(session, interaction.guild);
+        await interaction.message.edit({
+          flags: MessageFlags.IsComponentsV2,
+          components: [container.toJSON()] as any,
+        }).catch(() => null);
+
+        if (!session.isGameOver) {
+          setupCatWalkTimeout(client, session);
+        }
+      } catch (err) {
+        session.isBusy = false;
+        logger.error({ err }, 'Error in CatWalk step button:');
+      }
+    },
+  });
+
+  // Global button listener for CatWalk Cash Out click
+  client.buttons.set(/^ccat_cashout_/, {
+    customId: /^ccat_cashout_/,
+    execute: async (interaction) => {
+      const match = interaction.customId.match(/^ccat_cashout_(\d+)$/);
+      if (!match) return;
+
+      const targetUserId = match[1];
+
+      if (interaction.user.id !== targetUserId) {
+        await interaction.reply({
+          content: '❌ This is not your Cat Walk game!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const session = gambleService.getCatWalkGame(targetUserId);
+      if (!session || session.isGameOver || session.isCashedOut || session.currentStep === 0) {
+        await interaction.reply({
+          content: '❌ This Cat Walk game is no longer active!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (session.isBusy) {
+        return;
+      }
+      session.isBusy = true;
+
+      await interaction.deferUpdate();
+
+      try {
+        const cashOutRes = await gambleService.cashOutCatWalk(targetUserId);
+        if (!cashOutRes.success) return;
+
+        const container = renderCatWalkContainer(session, interaction.guild);
+        await interaction.message.edit({
+          flags: MessageFlags.IsComponentsV2,
+          components: [container.toJSON()] as any,
+        }).catch(() => null);
+      } catch (err) {
+        session.isBusy = false;
+        logger.error({ err }, 'Error in CatWalk cashout button:');
+      }
     },
   });
 
@@ -792,6 +895,201 @@ function setupMinesTimeout(client: CozyClient, session: MinesGameSession) {
   }, 120000);
 }
 
+function renderCatWalkContainer(
+  session: CatWalkSession,
+  guild?: Guild | null,
+  customTitle?: string,
+): ContainerBuilder {
+  const catWalkEmoji = GambleAssets.getCatWalk(guild);
+  const nextInfo = gambleService.getNextCatWalkPayout(session);
+
+  let header: string;
+  let infoLine2: string;
+  let accentColor: number;
+
+  if (customTitle) {
+    header = `### ${customTitle}`;
+    accentColor = COLORS.DARK;
+    const currentMult = session.currentStep === 0 ? '0x' : `${session.multiplier.toFixed(2)}x`;
+    infoLine2 = `**Cash Out:** \`${formatCash(session.payout)}\` \`(${currentMult})\``;
+  } else if (session.hitObstacle) {
+    header = `### 💥 <@${session.userId}>'s cat got startled by an obstacle!`;
+    accentColor = COLORS.ERROR;
+    const lastPayout = session.payout > 0n ? session.payout : session.bet;
+    const currentMult = session.currentStep === 0 ? '0x' : `${session.multiplier.toFixed(2)}x`;
+    const nextStr = nextInfo.hasNext
+      ? `\`${formatCash(nextInfo.nextPayout)}\` \`(${nextInfo.nextMultiplier.toFixed(2)}x)\``
+      : '`MAX WIN!`';
+    infoLine2 = `~~**Cash Out:** \`${formatCash(lastPayout)}\` \`(${currentMult})\`   **Next:** ${nextStr}~~`;
+  } else if (session.isCashedOut) {
+    if (session.currentStep >= session.totalSteps) {
+      header = `### 🎉 <@${session.userId}>'s cat completed the entire walk! (MAX WIN)`;
+    } else {
+      header = `### 🐟 <@${session.userId}>'s cat finished the walk!`;
+    }
+    accentColor = COLORS.SUCCESS;
+    const nextStr = nextInfo.hasNext
+      ? `\`${formatCash(nextInfo.nextPayout)}\` \`(${nextInfo.nextMultiplier.toFixed(2)}x)\``
+      : '`MAX WIN!`';
+    infoLine2 = `**Cash Out:** \`${formatCash(session.payout)}\` \`(${session.multiplier.toFixed(2)}x)\`   ~~**Next:** ${nextStr}~~`;
+  } else {
+    header = `### ${catWalkEmoji} <@${session.userId}>'s cat is taking a walk.`;
+    accentColor = session.currentStep > 0 ? COLORS.SUCCESS : COLORS.PRIMARY;
+    const currentMult = session.currentStep === 0 ? '0x' : `${session.multiplier.toFixed(2)}x`;
+    const nextStr = nextInfo.hasNext
+      ? `\`${formatCash(nextInfo.nextPayout)}\` \`(${nextInfo.nextMultiplier.toFixed(2)}x)\``
+      : '`MAX WIN!`';
+    infoLine2 = `**Cash Out:** \`${formatCash(session.payout)}\` \`(${currentMult})\`   **Next:** ${nextStr}`;
+  }
+
+  const infoLine1 = `**Bet:** \`${formatCash(session.bet)}\`   **Steps:** \`${session.totalSteps}\`   **Failure Chance:** \`20.00%\``;
+
+  // Build the 10 tiles (2 rows of 5)
+  const tiles: string[] = [];
+  const catPos = session.currentStep;
+
+  for (let i = 0; i < 10; i++) {
+    if (session.hitObstacle) {
+      if (catPos < 9) {
+        if (i < catPos) {
+          tiles.push(GambleAssets.getCatTrailItem(i, guild));
+        } else if (i === catPos) {
+          tiles.push(GambleAssets.getCatPoof(guild));
+        } else if (i === catPos + 1) {
+          tiles.push(GambleAssets.getCatObstacle(guild));
+        } else {
+          tiles.push(GambleAssets.getCatTileFail(guild));
+        }
+      } else {
+        // Failed on the 10th step
+        if (i < 8) {
+          tiles.push(GambleAssets.getCatTrailItem(i, guild));
+        } else if (i === 8) {
+          tiles.push(GambleAssets.getCatPoof(guild));
+        } else {
+          tiles.push(GambleAssets.getCatObstacle(guild));
+        }
+      }
+    } else if (session.isCashedOut && catPos >= 10) {
+      // Max win reached
+      if (i < 9) {
+        tiles.push(GambleAssets.getCatTrailItem(i, guild));
+      } else {
+        tiles.push(GambleAssets.getCatWalk(guild));
+      }
+    } else {
+      // Active game or voluntarily cashed out
+      if (i < catPos) {
+        tiles.push(GambleAssets.getCatTrailItem(i, guild));
+      } else if (i === catPos) {
+        tiles.push(GambleAssets.getCatWalk(guild));
+      } else {
+        tiles.push(GambleAssets.getCatTile(guild));
+      }
+    }
+  }
+
+  const row1Str = tiles.slice(0, 5).join(' ');
+  const row2Str = tiles.slice(5, 10).join(' ');
+
+  const textLines = [
+    header,
+    infoLine1,
+    infoLine2,
+    '',
+    row1Str,
+    row2Str,
+  ];
+
+  // Action Row: [ Step (+gain) ] [ Cash Out: payout ]
+  const actionRow = new ActionRowBuilder<ButtonBuilder>();
+
+  // Button 1: Step
+  const stepBtn = new ButtonBuilder()
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji('🐾');
+
+  if (session.isGameOver) {
+    stepBtn
+      .setCustomId('ccat_step_disabled')
+      .setLabel('Step (+0)')
+      .setDisabled(true);
+  } else {
+    const gain = session.currentStep === 0
+      ? (nextInfo.nextPayout > session.bet ? nextInfo.nextPayout - session.bet : 0n)
+      : (nextInfo.nextPayout > session.payout ? nextInfo.nextPayout - session.payout : 0n);
+    const gainStr = gain > 0n ? `+${formatCash(gain)}` : '+0';
+
+    stepBtn
+      .setCustomId(`ccat_step_${session.userId}`)
+      .setLabel(`Step (${gainStr})`)
+      .setDisabled(session.isBusy);
+  }
+
+  // Button 2: Cash Out
+  const cashOutBtn = new ButtonBuilder()
+    .setStyle(ButtonStyle.Success)
+    .setEmoji('💵');
+
+  if (session.isGameOver) {
+    const label = session.payout > 0n ? `Cash Out: ${formatCash(session.payout)}` : 'Cash Out';
+    cashOutBtn
+      .setCustomId('ccat_cashout_disabled')
+      .setLabel(label)
+      .setDisabled(true);
+  } else if (session.currentStep === 0) {
+    cashOutBtn
+      .setCustomId(`ccat_cashout_${session.userId}`)
+      .setLabel('Cash Out')
+      .setDisabled(true);
+  } else {
+    cashOutBtn
+      .setCustomId(`ccat_cashout_${session.userId}`)
+      .setLabel(`Cash Out: ${formatCash(session.payout)}`)
+      .setDisabled(session.isBusy);
+  }
+
+  actionRow.addComponents(stepBtn, cashOutBtn);
+
+  return new ContainerBuilder()
+    .setAccentColor(accentColor)
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(textLines.join('\n')))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    .addActionRowComponents(actionRow);
+}
+
+function setupCatWalkTimeout(client: CozyClient, session: CatWalkSession) {
+  if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+  session.timeoutHandle = setTimeout(async () => {
+    const current = gambleService.getCatWalkGame(session.userId);
+    if (!current || current.isGameOver || current.isCashedOut) return;
+
+    const res = await gambleService.expireCatWalk(session.userId);
+
+    try {
+      if (current.channelId && current.messageId) {
+        const channel = await client.channels.fetch(current.channelId).catch(() => null);
+        if (channel && 'messages' in channel) {
+          const msg = await (channel as any).messages.fetch(current.messageId).catch(() => null);
+          if (msg) {
+            const title = res.cashedOut
+              ? '⏰ Cozy Cat Walk — Auto Cashed Out (Timeout)'
+              : '⏰ Cozy Cat Walk — Game Expired (Bet Refunded)';
+            const container = renderCatWalkContainer(current, (channel as any)?.guild, title);
+            await msg.edit({
+              flags: MessageFlags.IsComponentsV2,
+              components: [container.toJSON()] as any,
+            }).catch(() => null);
+          }
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error in CatWalk timeout handler:');
+    }
+  }, 120000);
+}
+
 const GAMBLE_COMMANDS = new Set([
   'ccash',
   'cozycash',
@@ -818,6 +1116,12 @@ const GAMBLE_COMMANDS = new Set([
   'cozycoinflip',
   'ccf',
   'cozycf',
+  'ccat',
+  'cwalk',
+  'cozycat',
+  'cozywalk',
+  'catwalk',
+  'ccatwalk',
   'caddcash',
   'cozyaddcash',
   'cgivecash',
@@ -850,6 +1154,9 @@ const COZY_SUBCOMMANDS = new Set([
   'mine',
   'coinflip',
   'cf',
+  'cat',
+  'walk',
+  'catwalk',
   'giveaway',
   'gw',
   'airdrop',
@@ -1891,6 +2198,63 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       coinflipCooldowns.delete(user.id);
       logger.error({ err }, 'Error in ccoinflip command:');
       await message.reply({ content: '❌ Terjadi kesalahan saat melempar koin.' });
+    }
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // 12. COZY CAT WALK: ccat, cwalk, cozycat, cozywalk, cozy cat, cozy walk
+  // -------------------------------------------------------------
+  if (
+    firstWord === 'ccat' ||
+    firstWord === 'cwalk' ||
+    firstWord === 'cozycat' ||
+    firstWord === 'cozywalk' ||
+    firstWord === 'ccatwalk' ||
+    firstWord === 'catwalk' ||
+    (firstWord === 'cozy' && (secondWord === 'cat' || secondWord === 'walk' || secondWord === 'catwalk'))
+  ) {
+    const betInput = (firstWord === 'cozy' ? args[2] : args[1]) || '';
+
+    if (!betInput) {
+      await message.reply({
+        content: `❌ Format: \`ccat <bet|all>\` (Contoh: \`ccat 10k\`, \`ccat 50000\`, \`ccat all\`, \`cwalk 100k\`)`,
+      });
+      return true;
+    }
+
+    try {
+      const startRes = await gambleService.startCatWalk(user.id, betInput, user.username, displayName);
+      if (!startRes.success) {
+        if (startRes.error === 'ACTIVE_GAME_EXISTS') {
+          await message.reply({ content: '⏳ You already have an active Cat Walk game in progress! Finish it or cash out first.' });
+        } else if (startRes.error === 'INSUFFICIENT_FUNDS') {
+          await message.reply({
+            content: `🚫 | **${user.username}**, You don't have enough money in Cash! You have ${currencyEmoji} \`${formatCash(startRes.userCash || 0n)}\`.`,
+          });
+        } else if (startRes.error === 'BET_TOO_LOW') {
+          await message.reply({ content: '🚫 | Minimum bet is 1 Cozy Cash!' });
+        } else {
+          await message.reply({ content: '🚫 | Masukkan jumlah taruhan yang valid! (Contoh: `10000`, `10k`, `100k`, `1m`, `all`)' });
+        }
+        return true;
+      }
+
+      const session = startRes.session!;
+      session.channelId = message.channel.id;
+
+      const container = renderCatWalkContainer(session, guild);
+
+      const replyMsg = await message.reply({
+        flags: MessageFlags.IsComponentsV2,
+        components: [container.toJSON()] as any,
+      });
+      session.messageId = replyMsg.id;
+
+      setupCatWalkTimeout(client, session);
+    } catch (err) {
+      logger.error({ err }, 'Error in ccat command:');
+      await message.reply({ content: '❌ Terjadi kesalahan saat memulai permainan Cozy Cat Walk.' });
     }
     return true;
   }
