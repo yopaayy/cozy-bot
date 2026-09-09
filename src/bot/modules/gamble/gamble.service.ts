@@ -282,27 +282,29 @@ export class GambleService {
     await this.ensureUser(fromUserId, fromUsername);
     await this.ensureUser(toUserId, toUsername);
 
-    return prisma.$transaction(async (tx) => {
-      const sender = await tx.users.findUnique({ where: { discordId: fromUserId } });
-      if (!sender || sender.cozyCash < amount) {
-        return { success: false, error: 'INSUFFICIENT_FUNDS', fromCash: sender?.cozyCash || 0n, toCash: 0n };
-      }
+    return withDbRetry(async () => {
+      return prisma.$transaction(async (tx) => {
+        const sender = await tx.users.findUnique({ where: { discordId: fromUserId } });
+        if (!sender || sender.cozyCash < amount) {
+          return { success: false, error: 'INSUFFICIENT_FUNDS', fromCash: sender?.cozyCash || 0n, toCash: 0n };
+        }
 
-      const updatedSender = await tx.users.update({
-        where: { discordId: fromUserId },
-        data: { cozyCash: { decrement: amount } },
+        const updatedSender = await tx.users.update({
+          where: { discordId: fromUserId },
+          data: { cozyCash: { decrement: amount } },
+        });
+
+        const updatedReceiver = await tx.users.update({
+          where: { discordId: toUserId },
+          data: { cozyCash: { increment: amount } },
+        });
+
+        return {
+          success: true,
+          fromCash: updatedSender.cozyCash,
+          toCash: updatedReceiver.cozyCash,
+        };
       });
-
-      const updatedReceiver = await tx.users.update({
-        where: { discordId: toUserId },
-        data: { cozyCash: { increment: amount } },
-      });
-
-      return {
-        success: true,
-        fromCash: updatedSender.cozyCash,
-        toCash: updatedReceiver.cozyCash,
-      };
     });
   }
 

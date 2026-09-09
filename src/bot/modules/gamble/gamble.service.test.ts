@@ -131,6 +131,55 @@ describe('GambleService', () => {
     });
   });
 
+  describe('Transfer Cash (csend / cpay)', () => {
+    it('should transfer cash between users successfully', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({});
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'sender-1',
+        cozyCash: 50000n,
+      });
+      (prisma.users.update as any)
+        .mockResolvedValueOnce({
+          discordId: 'sender-1',
+          cozyCash: 40000n,
+        })
+        .mockResolvedValueOnce({
+          discordId: 'receiver-1',
+          cozyCash: 10000n,
+        });
+
+      const res = await service.transferCash('sender-1', 'receiver-1', 10000n, 'Sender', 'Receiver');
+      expect(res.success).toBe(true);
+      expect(res.fromCash).toBe(40000n);
+      expect(res.toCash).toBe(10000n);
+      expect(prisma.users.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('should reject self-transfer', async () => {
+      const res = await service.transferCash('user-same', 'user-same', 5000n);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('SELF_TRANSFER');
+    });
+
+    it('should reject when sender has insufficient funds', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({});
+      (prisma.users.findUnique as any).mockResolvedValue({
+        discordId: 'sender-poor',
+        cozyCash: 2000n,
+      });
+
+      const res = await service.transferCash('sender-poor', 'receiver-1', 10000n);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('INSUFFICIENT_FUNDS');
+    });
+
+    it('should reject invalid or zero amount', async () => {
+      const res = await service.transferCash('sender-1', 'receiver-1', 0n);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('INVALID_AMOUNT');
+    });
+  });
+
   describe('Cozy Mines Minigame', () => {
     it('should start a mines game, deduct bet, and register active session', async () => {
       (prisma.users.upsert as any).mockResolvedValue({

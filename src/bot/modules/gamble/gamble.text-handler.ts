@@ -25,6 +25,23 @@ const activeCoinflips = new Set<string>();
 const coinflipCooldowns = new Map<string, number>();
 const slotsCooldowns = new Map<string, number>();
 
+interface PendingSendTransaction {
+  id: string;
+  senderId: string;
+  senderDisplayName: string;
+  senderUsername: string;
+  senderAvatarUrl: string;
+  receiverId: string;
+  receiverDisplayName: string;
+  receiverUsername: string;
+  amount: bigint;
+  channelId: string;
+  messageId?: string;
+  timeoutHandle: NodeJS.Timeout;
+}
+
+const pendingSendTransactions = new Map<string, PendingSendTransaction>();
+
 function isDeveloper(user: { id: string }, guild?: { ownerId?: string } | null, client?: CozyClient): boolean {
   if (config.OWNER_ID && user.id === config.OWNER_ID) return true;
   if (guild?.ownerId && user.id === guild.ownerId) return true;
@@ -229,6 +246,104 @@ export function registerGambleComponents(client: CozyClient) {
         flags: MessageFlags.IsComponentsV2,
         components: [container.toJSON()] as any,
       });
+    },
+  });
+
+  // Global button listener for csend confirm & cancel buttons
+  client.buttons.set(/^csend_(confirm|cancel)_/, {
+    customId: /^csend_(confirm|cancel)_/,
+    execute: async (interaction) => {
+      const match = interaction.customId.match(/^csend_(confirm|cancel)_(.+)$/);
+      if (!match) return;
+      const action = match[1];
+      const txId = match[2];
+
+      const pending = pendingSendTransactions.get(txId);
+      if (!pending) {
+        await interaction.reply({
+          content: '❌ This transaction has expired or has already been processed!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Only the sender can confirm or cancel
+      if (interaction.user.id !== pending.senderId) {
+        await interaction.reply({
+          content: `❌ Only the sender (<@${pending.senderId}>) can confirm or cancel this transaction!`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Clear timeout and remove from active map
+      clearTimeout(pending.timeoutHandle);
+      pendingSendTransactions.delete(txId);
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
+
+      if (action === 'cancel') {
+        const cancelEmbed = new EmbedBuilder()
+          .setColor(COLORS.DARK)
+          .setAuthor({
+            name: `${pending.senderDisplayName} — Transaction Cancelled`,
+            iconURL: pending.senderAvatarUrl,
+          })
+          .setDescription(`❌ The transaction was cancelled by <@${pending.senderId}>. No Cozy Cash was transferred.`)
+          .setFooter({ text: `Today at ${timeStr}` });
+
+        await interaction.update({ embeds: [cancelEmbed], components: [] });
+        return;
+      }
+
+      // action === 'confirm': execute atomic transfer
+      const result = await gambleService.transferCash(
+        pending.senderId,
+        pending.receiverId,
+        pending.amount,
+        pending.senderUsername,
+        pending.receiverUsername,
+      );
+
+      if (!result.success) {
+        if (result.error === 'INSUFFICIENT_FUNDS') {
+          const failEmbed = new EmbedBuilder()
+            .setColor(COLORS.DARK)
+            .setAuthor({
+              name: `${pending.senderDisplayName} — Transaction Failed`,
+              iconURL: pending.senderAvatarUrl,
+            })
+            .setDescription(`🚫 | **${pending.senderDisplayName}**, You no longer have enough Cozy Cash in your Cash wallet!`)
+            .setFooter({ text: `Today at ${timeStr}` });
+
+          await interaction.update({ embeds: [failEmbed], components: [] });
+          return;
+        }
+
+        await interaction.update({
+          content: '❌ Transaction failed due to an unexpected error.',
+          embeds: [],
+          components: [],
+        });
+        return;
+      }
+
+      const successEmbed = new EmbedBuilder()
+        .setColor(COLORS.SUCCESS)
+        .setAuthor({
+          name: `${pending.senderDisplayName} — Transaction Confirmed`,
+          iconURL: pending.senderAvatarUrl,
+        })
+        .setDescription(
+          `✅ ${currencyEmoji} | **${pending.senderDisplayName}** gave **${formatCash(pending.amount)} Cozy Cash** to **${pending.receiverDisplayName}**!\n\n` +
+          `💰 **<@${pending.senderId}>** Cash: \`${formatCash(result.fromCash)}\`\n` +
+          `💰 **<@${pending.receiverId}>** Cash: \`${formatCash(result.toCash)}\``
+        )
+        .setFooter({ text: `Today at ${timeStr}` });
+
+      await interaction.update({ embeds: [successEmbed], components: [] });
     },
   });
 }
@@ -448,6 +563,11 @@ const GAMBLE_COMMANDS = new Set([
   'cwith',
   'cozywith',
   'cpay',
+  'cozypay',
+  'csend',
+  'cozysend',
+  'cgive',
+  'cozygive',
   'cdaily',
   'cweekly',
   'cwork',
@@ -475,6 +595,8 @@ const COZY_SUBCOMMANDS = new Set([
   'dep',
   'with',
   'pay',
+  'send',
+  'give',
   'daily',
   'weekly',
   'work',
@@ -719,49 +841,184 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
   }
 
   // -------------------------------------------------------------
-  // 4. PAY: cpay, cozy pay
+  // 4. SEND / PAY: csend, cozysend, cpay, cozypay, cgive, cozygive
   // -------------------------------------------------------------
-  if (firstWord === 'cpay' || (firstWord === 'cozy' && secondWord === 'pay')) {
-    const targetUser = message.mentions.users.first();
-    const amountStr = firstWord === 'cozy' ? args[3] : args[2];
+  const isSendCommand =
+    firstWord === 'csend' ||
+    firstWord === 'cozysend' ||
+    firstWord === 'cpay' ||
+    firstWord === 'cozypay' ||
+    firstWord === 'cgive' ||
+    firstWord === 'cozygive' ||
+    (firstWord === 'cozy' && (secondWord === 'send' || secondWord === 'pay' || secondWord === 'give'));
 
-    if (!targetUser || !amountStr) {
-      await message.reply({ content: '❌ Format: `cpay @user <amount>` (Contoh: `cpay @user 10000` atau `cpay @user 10k`)' });
+  if (isSendCommand) {
+    const rawTokens = firstWord === 'cozy' ? args.slice(2) : args.slice(1);
+
+    let targetUser = message.mentions.users.first();
+    if (!targetUser) {
+      const possibleIdToken = rawTokens.find((t) => /^\d{17,20}$/.test(t.replace(/<@!?(\d+)>/, '$1')));
+      if (possibleIdToken) {
+        const cleanId = possibleIdToken.replace(/<@!?(\d+)>/, '$1');
+        targetUser = (await client.users.fetch(cleanId).catch(() => null)) || undefined;
+      }
+    }
+
+    const nominalToken = rawTokens.find(
+      (t) => !targetUser || (!t.includes(targetUser.id) && !/<@!?\d+>/.test(t))
+    );
+
+    if (!targetUser || !nominalToken) {
+      await message.reply({
+        content:
+          '❌ Format: `csend <amount|all> @user` atau `csend @user <amount|all>` (Contoh: `csend 50k @user` atau `csend 50000 @user`)',
+      });
       return true;
     }
 
-    const parsedNominal = parseNominal(amountStr);
-    let amount: bigint;
-    if (parsedNominal.isAll) {
-      const bal = await gambleService.getBalance(user.id, user.username);
-      amount = bal.cash;
-    } else if (parsedNominal.valid && parsedNominal.amount) {
-      amount = parsedNominal.amount;
-    } else {
-      await message.reply({ content: '❌ Masukkan jumlah transfer yang valid! (Contoh: `10000`, `10k`, `100k`, `1m`)' });
+    if (targetUser.bot) {
+      await message.reply({ content: '🚫 | You cannot send Cozy Cash to a bot!' });
       return true;
     }
 
-    try {
-      const result = await gambleService.transferCash(user.id, targetUser.id, amount, user.username, targetUser.username);
-      if (!result.success) {
-        if (result.error === 'SELF_TRANSFER') {
-          await message.reply({ content: '❌ Kamu tidak bisa mentransfer uang ke diri sendiri!' });
-        } else if (result.error === 'INSUFFICIENT_FUNDS') {
-          await message.reply({ content: `❌ Saldo Cash kamu tidak cukup! (Cash kamu: \`${formatCash(result.fromCash)}\`)` });
-        } else {
-          await message.reply({ content: '❌ Gagal melakukan transfer uang.' });
-        }
+    if (targetUser.id === user.id) {
+      await message.reply({ content: '🚫 | You cannot send Cozy Cash to yourself!' });
+      return true;
+    }
+
+    // Check if receiver is registered in economy system
+    const isReceiverRegistered = await gambleService.isUserRegistered(targetUser.id);
+    if (!isReceiverRegistered) {
+      await message.reply({
+        content: `🚫 | <@${targetUser.id}> is not registered in the economy and leveling system yet! They must register using \`creg\` before they can receive Cozy Cash.`,
+      });
+      return true;
+    }
+
+    const parsedNominal = parseNominal(nominalToken);
+    if (!parsedNominal.valid) {
+      await message.reply({
+        content: '❌ Masukkan jumlah transfer yang valid! (Contoh: `5000`, `10k`, `100k`, `1m`, `all`)',
+      });
+      return true;
+    }
+
+    const senderBalance = await gambleService.getBalance(user.id, user.username);
+    const amount = parsedNominal.isAll ? senderBalance.cash : (parsedNominal.amount || 0n);
+
+    if (amount <= 0n) {
+      if (parsedNominal.isAll && senderBalance.cash <= 0n) {
+        await message.reply({
+          content: `🚫 | **${displayName}**, You don't have any money in Cash to send! You have ${currencyEmoji} \`0\` in Cash. (Note: Bank funds cannot be sent directly; withdraw them first using \`cwith\`).`,
+        });
         return true;
       }
-
       await message.reply({
-        content: `${currencyEmoji} | You paid **${formatCash(amount)} Cozy Cash** to <@${targetUser.id}>! (Cash: \`${formatCash(result.fromCash)}\`)`,
+        content: `🚫 | **${displayName}**, Please provide a valid amount to send (contoh: \`5000\`, \`10k\`, \`100k\`, \`1m\`, \`all\`)!`,
       });
-    } catch (err) {
-      logger.error({ err }, 'Error handling cpay:');
-      await message.reply({ content: '❌ Terjadi kesalahan saat mentransfer uang.' });
+      return true;
     }
+
+    if (senderBalance.cash < amount) {
+      await message.reply({
+        content: `🚫 | **${displayName}**, You don't have enough money in Cash! You have ${currencyEmoji} \`${formatCash(senderBalance.cash)}\`. (Note: Bank funds cannot be sent directly; withdraw them first using \`cwith\`).`,
+      });
+      return true;
+    }
+
+    const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+    const targetDisplayName = targetMember?.displayName || targetUser.displayName || targetUser.username;
+
+    // Cancel any previous pending send from this sender
+    for (const [existingId, tx] of pendingSendTransactions) {
+      if (tx.senderId === user.id) {
+        clearTimeout(tx.timeoutHandle);
+        pendingSendTransactions.delete(existingId);
+      }
+    }
+
+    const txId = crypto.randomUUID().slice(0, 8);
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const senderAvatar = member?.displayAvatarURL() || user.displayAvatarURL();
+
+    const confirmEmbed = new EmbedBuilder()
+      .setColor(COLORS.PRIMARY)
+      .setAuthor({
+        name: `${displayName}, you are about to give Cozy Cash to ${targetDisplayName}`,
+        iconURL: senderAvatar,
+      })
+      .setDescription(
+        `To confirm this transaction, click ✅ **Confirm**.\n` +
+        `To cancel this transaction, click ❌ **Cancel**.\n\n` +
+        `⚠️ *It is against our rules to trade Cozy Cash for anything of monetary value. This includes real money, crypto, nitro, or anything similar. You will be banned for doing so.*\n\n` +
+        `**<@${user.id}> will give <@${targetUser.id}>:**\n` +
+        `\`\`\`\n${formatCash(amount)} Cozy Cash\n\`\`\``
+      )
+      .setFooter({ text: `Today at ${timeStr}` });
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`csend_confirm_${txId}`)
+        .setLabel('Confirm')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('✅'),
+      new ButtonBuilder()
+        .setCustomId(`csend_cancel_${txId}`)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌'),
+    );
+
+    const confirmMsg = await message.reply({
+      embeds: [confirmEmbed],
+      components: [row],
+    });
+
+    const timeoutHandle = setTimeout(async () => {
+      const current = pendingSendTransactions.get(txId);
+      if (!current) return;
+      pendingSendTransactions.delete(txId);
+
+      try {
+        const channel = client.channels.cache.get(current.channelId) as any;
+        if (channel && current.messageId) {
+          const msg = await channel.messages.fetch(current.messageId).catch(() => null);
+          if (msg) {
+            const expNow = new Date();
+            const expTimeStr = expNow.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const expireEmbed = new EmbedBuilder()
+              .setColor(COLORS.DARK)
+              .setAuthor({
+                name: `${current.senderDisplayName} — Transaction Expired`,
+                iconURL: current.senderAvatarUrl,
+              })
+              .setDescription(`⏱️ | Transaction timed out after 60 seconds. No Cozy Cash was transferred.`)
+              .setFooter({ text: `Today at ${expTimeStr}` });
+
+            await msg.edit({ embeds: [expireEmbed], components: [] }).catch(() => null);
+          }
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error handling send transaction timeout:');
+      }
+    }, 60000);
+
+    pendingSendTransactions.set(txId, {
+      id: txId,
+      senderId: user.id,
+      senderDisplayName: displayName,
+      senderUsername: user.username,
+      senderAvatarUrl: senderAvatar,
+      receiverId: targetUser.id,
+      receiverDisplayName: targetDisplayName,
+      receiverUsername: targetUser.username,
+      amount,
+      channelId: message.channel.id,
+      messageId: confirmMsg.id,
+      timeoutHandle,
+    });
+
     return true;
   }
 

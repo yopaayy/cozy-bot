@@ -35,7 +35,7 @@
 | `ccash` | `ccash` atau `ccash @teman` | Cek total kekayaan, saldo aktif dompet `Cash`, dan saldo simpanan `Bank` |
 | `cdep <nominal\|all>` | `cdep 5000`<br>`cdep 10k`<br>`cdep 100k`<br>`cdep all` | Menyetor uang dari dompet `Cash` ke `Bank` agar aman |
 | `cwith <nominal\|all>` | `cwith 2000`<br>`cwith 10k`<br>`cwith 50k`<br>`cwith all` | Menarik uang dari `Bank` kembali ke dompet aktif `Cash` |
-| `cpay @user <nominal>` | `cpay @dojaa 1000`<br>`cpay @dojaa 10k` | Mentransfer saldo dompet Cash ke member lain |
+| `csend <nominal\|all> @user`<br>atau<br>`csend @user <nominal\|all>` | `csend 50k @dojaa`<br>`csend @dojaa 50k`<br>`cozysend 50000 @dojaa`<br>`csend all @dojaa` | **Transfer Uang dengan Konfirmasi Interaktif:**<br>• Menampilkan dialog konfirmasi embed persis referensi dengan tombol `[ ✅ Confirm ]` & `[ ❌ Cancel ]`.<br>• **Hanya pengirim** yang berhak klik konfirmasi/batal.<br>• **Hanya saldo Cash** yang bisa dikirim (saldo Bank aman terlindungi).<br>• Kedua belah pihak (pengirim & penerima) **wajib sudah terdaftar** via `creg`.<br>• Auto-cancel jika tidak ada tindakan dalam 60 detik. |
 
 ---
 
