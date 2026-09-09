@@ -22,6 +22,7 @@ import type {
   CatWalkSession,
   CatWalkStepResult,
   CatWalkCashOutResult,
+  PvPDuelResult,
 } from './gamble.types';
 
 const PROFESSIONS = [
@@ -1181,6 +1182,125 @@ export class GambleService {
       this.activeCatWalkGames.delete(discordId);
       return { cashedOut: false, payout: session.bet };
     }
+  }
+
+  /**
+   * Execute an agreed PvP Coinflip Duel atomically (Equal wager, Winner Takes All)
+   */
+  public async executePvPDuel(
+    challengerId: string,
+    opponentId: string,
+    bet: bigint,
+    challengerChoice: CoinflipSide,
+    opponentChoice: CoinflipSide,
+    challengerUsername?: string,
+    opponentUsername?: string,
+  ): Promise<PvPDuelResult> {
+    await this.ensureUser(challengerId, challengerUsername);
+    await this.ensureUser(opponentId, opponentUsername);
+
+    return withDbRetry(async () => {
+      return prisma.$transaction(async (tx) => {
+        const challenger = await tx.users.findUnique({ where: { discordId: challengerId } });
+        const opponent = await tx.users.findUnique({ where: { discordId: opponentId } });
+
+        if (!challenger || !opponent) {
+          return {
+            success: false,
+            error: 'USER_NOT_FOUND',
+            winnerId: '',
+            loserId: '',
+            winnerChoice: challengerChoice,
+            loserChoice: opponentChoice,
+            outcomeSide: 'heads',
+            bet,
+            totalPot: bet * 2n,
+            winnerNewBalance: 0n,
+          };
+        }
+
+        if (challenger.cozyCash < bet) {
+          return {
+            success: false,
+            error: 'CHALLENGER_INSUFFICIENT_FUNDS',
+            winnerId: '',
+            loserId: '',
+            winnerChoice: challengerChoice,
+            loserChoice: opponentChoice,
+            outcomeSide: 'heads',
+            bet,
+            totalPot: bet * 2n,
+            winnerNewBalance: 0n,
+          };
+        }
+
+        if (opponent.cozyCash < bet) {
+          return {
+            success: false,
+            error: 'OPPONENT_INSUFFICIENT_FUNDS',
+            winnerId: '',
+            loserId: '',
+            winnerChoice: challengerChoice,
+            loserChoice: opponentChoice,
+            outcomeSide: 'heads',
+            bet,
+            totalPot: bet * 2n,
+            winnerNewBalance: 0n,
+          };
+        }
+
+        // 1. Deduct equal bet from both players
+        await tx.users.update({
+          where: { discordId: challengerId },
+          data: { cozyCash: { decrement: bet } },
+        });
+
+        await tx.users.update({
+          where: { discordId: opponentId },
+          data: { cozyCash: { decrement: bet } },
+        });
+
+        // 2. Flip coin using CSPRNG
+        const outcomeSide: CoinflipSide = this.coinflipEngine.flip();
+        const totalPot = bet * 2n;
+
+        // 3. Determine winner
+        let winnerId: string;
+        let loserId: string;
+        let winnerChoice: CoinflipSide;
+        let loserChoice: CoinflipSide;
+
+        if (outcomeSide === challengerChoice) {
+          winnerId = challengerId;
+          loserId = opponentId;
+          winnerChoice = challengerChoice;
+          loserChoice = opponentChoice;
+        } else {
+          winnerId = opponentId;
+          loserId = challengerId;
+          winnerChoice = opponentChoice;
+          loserChoice = challengerChoice;
+        }
+
+        // 4. Credit entire pot to the winner
+        const updatedWinner = await tx.users.update({
+          where: { discordId: winnerId },
+          data: { cozyCash: { increment: totalPot } },
+        });
+
+        return {
+          success: true,
+          winnerId,
+          loserId,
+          winnerChoice,
+          loserChoice,
+          outcomeSide,
+          bet,
+          totalPot,
+          winnerNewBalance: updatedWinner.cozyCash,
+        };
+      });
+    });
   }
 }
 

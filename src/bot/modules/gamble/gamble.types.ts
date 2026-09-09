@@ -175,4 +175,37 @@ export interface CatWalkCashOutResult {
   newBalance: bigint;
 }
 
+export interface PvPDuelSession {
+  id: string;
+  channelId: string;
+  messageId?: string;
+  challengerId: string;
+  challengerUsername: string;
+  challengerDisplayName: string;
+  challengerAvatarUrl: string;
+  opponentId: string;
+  opponentUsername: string;
+  opponentDisplayName: string;
+  opponentAvatarUrl: string;
+  bet: bigint;
+  challengerChoice?: CoinflipSide;
+  opponentChoice?: CoinflipSide;
+  createdAt: number;
+  timeoutHandle: NodeJS.Timeout;
+  isBusy?: boolean;
+}
+
+export interface PvPDuelResult {
+  success: boolean;
+  error?: string;
+  winnerId: string;
+  loserId: string;
+  winnerChoice: CoinflipSide;
+  loserChoice: CoinflipSide;
+  outcomeSide: CoinflipSide;
+  bet: bigint;
+  totalPot: bigint;
+  winnerNewBalance: bigint;
+}
+
 

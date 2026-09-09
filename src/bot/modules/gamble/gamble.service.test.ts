@@ -511,6 +511,157 @@ describe('GambleService', () => {
       expect(service.getCatWalkGame('user-cat4')).toBeUndefined();
     });
   });
+
+  describe('PvP Coinflip / Duels (executePvPDuel)', () => {
+    it('should execute a duel successfully, deduct bet from both, and award pot to winner', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({ discordId: 'u1' });
+
+      (prisma.users.findUnique as any)
+        .mockResolvedValueOnce({
+          discordId: 'user-p1',
+          username: 'player1',
+          cozyCash: 50000n,
+          cozyBank: 0n,
+        })
+        .mockResolvedValueOnce({
+          discordId: 'user-p2',
+          username: 'player2',
+          cozyCash: 50000n,
+          cozyBank: 0n,
+        });
+
+      (prisma.users.update as any)
+        .mockResolvedValueOnce({ discordId: 'user-p1', cozyCash: 30000n })
+        .mockResolvedValueOnce({ discordId: 'user-p2', cozyCash: 30000n })
+        .mockResolvedValueOnce({ discordId: 'user-p1', cozyCash: 70000n });
+
+      vi.spyOn((service as any).coinflipEngine, 'flip').mockReturnValueOnce('heads');
+
+      const result = await service.executePvPDuel(
+        'user-p1',
+        'user-p2',
+        20000n,
+        'heads',
+        'tails',
+        'player1',
+        'player2',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.winnerId).toBe('user-p1');
+      expect(result.loserId).toBe('user-p2');
+      expect(result.outcomeSide).toBe('heads');
+      expect(result.bet).toBe(20000n);
+      expect(result.totalPot).toBe(40000n);
+      expect(result.winnerNewBalance).toBe(70000n);
+
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'user-p1' },
+        data: { cozyCash: { decrement: 20000n } },
+      });
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'user-p2' },
+        data: { cozyCash: { decrement: 20000n } },
+      });
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'user-p1' },
+        data: { cozyCash: { increment: 40000n } },
+      });
+    });
+
+    it('should award opponent when outcome matches opponent choice', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({ discordId: 'u1' });
+
+      (prisma.users.findUnique as any)
+        .mockResolvedValueOnce({
+          discordId: 'user-p1',
+          username: 'player1',
+          cozyCash: 50000n,
+        })
+        .mockResolvedValueOnce({
+          discordId: 'user-p2',
+          username: 'player2',
+          cozyCash: 50000n,
+        });
+
+      (prisma.users.update as any)
+        .mockResolvedValueOnce({ discordId: 'user-p1', cozyCash: 40000n })
+        .mockResolvedValueOnce({ discordId: 'user-p2', cozyCash: 40000n })
+        .mockResolvedValueOnce({ discordId: 'user-p2', cozyCash: 60000n });
+
+      vi.spyOn((service as any).coinflipEngine, 'flip').mockReturnValueOnce('tails');
+
+      const result = await service.executePvPDuel(
+        'user-p1',
+        'user-p2',
+        10000n,
+        'heads',
+        'tails',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.winnerId).toBe('user-p2');
+      expect(result.loserId).toBe('user-p1');
+      expect(result.outcomeSide).toBe('tails');
+      expect(result.winnerNewBalance).toBe(60000n);
+    });
+
+    it('should reject if challenger has insufficient cash', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({ discordId: 'u1' });
+
+      (prisma.users.findUnique as any)
+        .mockResolvedValueOnce({
+          discordId: 'user-p1',
+          username: 'player1',
+          cozyCash: 5000n,
+        })
+        .mockResolvedValueOnce({
+          discordId: 'user-p2',
+          username: 'player2',
+          cozyCash: 50000n,
+        });
+
+      const result = await service.executePvPDuel(
+        'user-p1',
+        'user-p2',
+        10000n,
+        'heads',
+        'tails',
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('CHALLENGER_INSUFFICIENT_FUNDS');
+      expect(prisma.users.update).not.toHaveBeenCalled();
+    });
+
+    it('should reject if opponent has insufficient cash', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({ discordId: 'u1' });
+
+      (prisma.users.findUnique as any)
+        .mockResolvedValueOnce({
+          discordId: 'user-p1',
+          username: 'player1',
+          cozyCash: 50000n,
+        })
+        .mockResolvedValueOnce({
+          discordId: 'user-p2',
+          username: 'player2',
+          cozyCash: 3000n,
+        });
+
+      const result = await service.executePvPDuel(
+        'user-p1',
+        'user-p2',
+        10000n,
+        'heads',
+        'tails',
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('OPPONENT_INSUFFICIENT_FUNDS');
+      expect(prisma.users.update).not.toHaveBeenCalled();
+    });
+  });
 });
 
 

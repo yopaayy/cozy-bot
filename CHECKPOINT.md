@@ -11,11 +11,11 @@
 | Item | Status |
 |---|---|
 | **Fase Saat Ini** | Modul Ekstensi — Economy & Minigames System |
-| **Tahap Aktif** | Tahap 1, 2, & 3 `🟢` + Cozy Send `🟢` + Cozy Giveaway `🟢` + Cozy Cat Walk `🟢` |
+| **Tahap Aktif** | Tahap 1, 2, & 3 `🟢` + Cozy Send `🟢` + Cozy Giveaway `🟢` + Cozy Cat Walk `🟢` + PvP Coinflip / Duels `🟢` |
 | **Terakhir Dikerjakan Oleh** | Antigravity AI |
 | **Tanggal Update Terakhir** | 2026-09-09 |
 | **Blocker** | Tidak ada |
-| **Next Action** | Testing in-game Cozy Cat Walk di server & Next Minigames / Deployment |
+| **Next Action** | Testing in-game PvP Coinflip / Duels & Next Minigames / Deployment |
 
 ---
 
@@ -412,7 +412,45 @@
   - Update dokumentasi proyek di `COMMANDS_GUIDE.md` dan `CHECKPOINT.md`.
 - **Status akhir**: Fitur Developer Giveaway / Airdrop selesai 100%, teruji aman, dan siap digunakan langsung oleh YP.
 - **Blocker**: Tidak ada.
-- **Next Action**: Deployment ke hosting Pterodactyl & transisi ke **Fase 2: Welcome & Goodbye System**.
+- **Next Action**: Implementasi Minigame Cozy Cat Walk.
+
+### Session #12 — 2026-09-09 (Cozy Cat Walk Minigame Implementation)
+- **Model**: Antigravity AI
+- **Durasi**: ~25 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **Minigame Cozy Cat Walk (`ccat` / `cwalk` / `cozycat` / `cozywalk`)**:
+    - **Jalur 10 Langkah Presisi (2 Baris x 5 Petak)**: Engine `CatWalkEngine.ts` dengan peluang sukses 80% per langkah (20% obstacle) dan multiplier bertingkat 1.17x s/d 8.75x (Max Win).
+    - **8 Aset Emoji Kustom Server**: `cat_walk.gif`, `cat_tile.png`, `cat_paw.gif`, `cat_fish.gif`, `cat_yarn.png`, `cat_obstacle.png`, `cat_poof.gif`, `cat_tile_fail.png`.
+    - **Discord Components V2 Container UI**: Desain modular bergaris samping warna dinamis (Blurple / Hijau / Merah) dengan tombol `[ 🐾 Step (+gain) ]` dan `[ 💵 Cash Out ]`.
+    - **Anti-Spam & Mutex Lock**: Proteksi `isBusy` per sesi, immediate `interaction.deferUpdate()`, auto-refund/auto-cashout saat timeout 2 menit.
+  - **Uji Coba**:
+    - 67 / 67 unit tests PASSED di Vitest.
+    - TypeScript compilation & production build lolos (0 error).
+
+### Session #13 — 2026-09-09 (PvP Coinflip / Duels System Implementation)
+- **Model**: Antigravity AI
+- **Durasi**: ~20 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **PvP Coinflip / Duels (`cduel` / `ccf @user <bet>`)**:
+    - **Taruhan Seimbang (Equal Wager)**: Kedua pemain wajib mempertaruhkan nominal yang sama persis (`bet`). Total pot pemenang adalah **2x taruhan** ($2 \times \text{bet}$) dengan sistem *Winner Takes All*.
+    - **Persetujuan 2 Belah Pihak (Mutual Consent)**: Penantang mengirim tantangan via embed gold proporsional. Lawan wajib klik `[ ⚔️ Accept Duel (bet) ]` atau `[ 🏳️ Decline ]`. Penantang berhak klik `[ 🛑 Cancel ]`. Pihak ketiga otomatis ditolak dengan pesan ephemeral.
+    - **Alokasi Sisi Koin yang Adil**: Jika penantang memilih sisi (`h`/`heads` atau `t`/`tails`), lawan otomatis mendapatkan sisi sebaliknya. Jika tidak ditentukan, sistem membagikan 50/50 secara acak saat duel diterima.
+    - **Animasi 2-Frame Anti-Timeout**:
+      - Frame 1: Animasi koin berputar `<a:cozy_coinspin:id>` selama 1.5 detik.
+      - Frame 2: Embed kemenangan hijau dengan avatar pemenang 👑, koin hasil akhir `<:coin_heads:id>` / `<:coin_tails:id>`, nominal pot kemenangan, saldo baru pemenang, dan pengurangan saldo yang kalah.
+    - **Proteksi Transaksi & Keamanan Tinggi**:
+      - Wajib registrasi `creg` untuk kedua pemain.
+      - Saldo dompet `Cash` diverifikasi untuk penantang dan lawan sebelum tantangan dibuat & diverifikasi ulang saat transaksi atomik dieksekusi.
+      - `withDbRetry` + `prisma.$transaction` untuk memproses pengurangan taruhan kedua pemain dan kredit pot ke pemenang secara atomik.
+      - Mutex lock in-memory `userActiveDuel` & `activeDuels` mencegah multi-duel bersamaan dan spam klik.
+      - Timeout 60 detik membatalkan duel otomatis tanpa memotong koin sepeser pun.
+  - **Uji Coba & Stabilisasi**:
+    - 71 / 71 unit tests PASSED di Vitest (100% lulus, termasuk suite `executePvPDuel`).
+    - TypeScript compilation (`tsc --noEmit` dan `tsc -p tsconfig.bot.json`) lolos 100% (0 error).
+  - Update dokumentasi di `COMMANDS_GUIDE.md` dan `CHECKPOINT.md`.
+- **Status akhir**: Fitur PvP Coinflip / Duels selesai 100%, teruji aman, dan siap digunakan langsung.
+- **Blocker**: Tidak ada.
+- **Next Action**: Testing in-game di server & Next Minigames / Deployment.
 
 ---
 
