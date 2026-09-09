@@ -82,6 +82,7 @@ Mesin slot 3-reel dengan **5 simbol kustom** dari aset yang Anda unggah dan anim
 | :--- | :--- | :--- |
 | `caddcash` / `cgivecash` | `caddcash 1000000`<br>`caddcash 500000 @teman` | Menambahkan nominal Cozy Cash ke dompet Cash Anda (atau user yang di-mention) |
 | `csetcash` | `csetcash 5000000`<br>`csetcash 100000 @teman` | Mengatur saldo dompet Cash ke angka tertentu secara instan |
+| `cgiveaway` / `cgw`<br>`cairdrop` | `cgw 5m 100k`<br>`cgw 5m 50`<br>`cgw 50k all`<br>`cgw end`<br>`cgw template` | **Menyelenggarakan Giveaway / Airdrop Komunitas:**<br>• **Uang Sistem**: Tidak memotong uang dev/host (meski dev punya 0 cash).<br>• **Dev Tidak Bisa Klaim**: Menjaga keadilan event.<br>• **1 Klaim per User & Anti-Race**: Proteksi mutex dan anti double-click.<br>• **Wajib Regis `creg`**: Member belum regis ditolak.<br>• **Live Update**: Embed gold ter-update real-time per klaim. |
 
 ---
 

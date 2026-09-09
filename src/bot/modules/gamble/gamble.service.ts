@@ -901,6 +901,31 @@ export class GambleService {
     const nextPayout = this.minesEngine.calculatePayout(session.bet, nextMultiplier);
     return { nextMultiplier, nextPayout, hasNext: true };
   }
+
+  /**
+   * Developer Giveaway: Claim giveaway cash directly into user wallet
+   */
+  public async claimGiveaway(
+    discordId: string,
+    amount: bigint,
+    username?: string | null,
+  ): Promise<{ success: boolean; newBalance: bigint }> {
+    await this.ensureUser(discordId, username);
+
+    return withDbRetry(async () => {
+      const updated = await prisma.users.update({
+        where: { discordId },
+        data: {
+          cozyCash: { increment: amount },
+        },
+      });
+
+      return {
+        success: true,
+        newBalance: updated.cozyCash,
+      };
+    });
+  }
 }
 
 export const gambleService = new GambleService();

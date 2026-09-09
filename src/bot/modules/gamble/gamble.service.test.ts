@@ -359,5 +359,24 @@ describe('GambleService', () => {
       expect(resFunds.error).toBe('INSUFFICIENT_FUNDS');
     });
   });
+
+  describe('Developer Giveaway (claimGiveaway)', () => {
+    it('should claim giveaway and credit cash directly to user wallet', async () => {
+      (prisma.users.upsert as any).mockResolvedValue({});
+      (prisma.users.update as any).mockResolvedValue({
+        discordId: 'winner-1',
+        cozyCash: 150000n,
+      });
+
+      const res = await service.claimGiveaway('winner-1', 100000n, 'LuckyWinner');
+      expect(res.success).toBe(true);
+      expect(res.newBalance).toBe(150000n);
+      expect(prisma.users.update).toHaveBeenCalledWith({
+        where: { discordId: 'winner-1' },
+        data: { cozyCash: { increment: 100000n } },
+      });
+    });
+  });
 });
+
 

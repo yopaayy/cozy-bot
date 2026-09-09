@@ -42,6 +42,107 @@ interface PendingSendTransaction {
 
 const pendingSendTransactions = new Map<string, PendingSendTransaction>();
 
+interface GiveawaySession {
+  id: string;
+  channelId: string;
+  messageId?: string;
+  hostId: string;
+  hostDisplayName: string;
+  hostAvatarUrl: string;
+  totalPool: bigint;
+  rewardPerUser: bigint;
+  maxWinners: number | null;
+  claimedUserIds: Set<string>;
+  claimedQueue: Set<string>;
+  active: boolean;
+  createdAt: number;
+}
+
+const activeGiveaways = new Map<string, GiveawaySession>();
+
+function renderGiveaway(giveaway: GiveawaySession, currencyEmoji: string) {
+  const claimedCount = giveaway.claimedUserIds.size;
+  const isCompleted = giveaway.maxWinners !== null && claimedCount >= giveaway.maxWinners;
+  const isEnded = !giveaway.active || isCompleted;
+
+  const totalPoolStr = formatCash(giveaway.totalPool);
+  const rewardStr = formatCash(giveaway.rewardPerUser);
+  const remainingCash = giveaway.maxWinners !== null
+    ? giveaway.rewardPerUser * BigInt(Math.max(0, giveaway.maxWinners - claimedCount))
+    : giveaway.totalPool;
+
+  const maxWinnersStr = giveaway.maxWinners !== null ? `${giveaway.maxWinners}` : '∞ (All)';
+
+  let progressBar = '';
+  if (giveaway.maxWinners !== null && giveaway.maxWinners > 0) {
+    const ratio = Math.min(1, claimedCount / giveaway.maxWinners);
+    const filled = Math.round(ratio * 10);
+    const empty = 10 - filled;
+    progressBar = ` \`[${'■'.repeat(filled)}${'□'.repeat(empty)}]\``;
+  }
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+  const embed = new EmbedBuilder()
+    .setColor(isEnded ? COLORS.DARK : (0xF1C40F as any))
+    .setAuthor({
+      name: isEnded
+        ? `${giveaway.hostDisplayName} — Giveaway Ended`
+        : `${giveaway.hostDisplayName} is hosting a Cozy Giveaway! 🎉`,
+      iconURL: giveaway.hostAvatarUrl,
+    })
+    .setTitle(isEnded ? '🏁 COZY CASH AIRDROP (ENDED)' : '🎁 COZY CASH AIRDROP & GIVEAWAY')
+    .setDescription(
+      isEnded
+        ? `**This giveaway has concluded!**\n\n` +
+          `💰 **Total Distributed**: ${currencyEmoji} **${formatCash(giveaway.rewardPerUser * BigInt(claimedCount))} Cozy Cash**\n` +
+          `👥 **Total Winners**: **${claimedCount} members** claimed their reward.\n\n` +
+          `*Thank you for participating! Stay tuned for the next community giveaway.*`
+        : `Click the **[ 🎁 Claim ]** button below to claim your **Cozy Cash**!\n\n` +
+          `💰 **Total Pool**: ${currencyEmoji} **${totalPoolStr} Cozy Cash**\n` +
+          `🎁 **Reward / Member**: ${currencyEmoji} **${rewardStr} Cozy Cash**\n` +
+          `👥 **Claims**: **${claimedCount} / ${maxWinnersStr}** Claimed${progressBar}\n` +
+          `⏳ **Remaining Cash**: ${currencyEmoji} **${formatCash(remainingCash)} Cozy Cash**\n\n` +
+          `📋 **Rules & Information**:\n` +
+          `• **1 claim per member** (anti-multi claim)\n` +
+          `• Must be registered via \`creg\`\n` +
+          `• Cash is credited directly to your wallet\n` +
+          `• First-come, first-served!`
+    )
+    .setFooter({
+      text: `Today at ${timeStr} • Hosted by ${giveaway.hostDisplayName}`,
+    });
+
+  const row = new ActionRowBuilder<ButtonBuilder>();
+
+  if (isEnded) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cgw_ended_${giveaway.id}`)
+        .setLabel(isCompleted ? 'All Slots Claimed' : 'Giveaway Ended')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🏁')
+        .setDisabled(true),
+    );
+  } else {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`cgw_claim_${giveaway.id}`)
+        .setLabel(`Claim ${rewardStr} Cash`)
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('🎁'),
+      new ButtonBuilder()
+        .setCustomId(`cgw_end_${giveaway.id}`)
+        .setLabel('End Giveaway (Dev)')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🛑'),
+    );
+  }
+
+  return { embed, row };
+}
+
 function isDeveloper(user: { id: string }, guild?: { ownerId?: string } | null, client?: CozyClient): boolean {
   if (config.OWNER_ID && user.id === config.OWNER_ID) return true;
   if (guild?.ownerId && user.id === guild.ownerId) return true;
@@ -346,6 +447,142 @@ export function registerGambleComponents(client: CozyClient) {
       await interaction.update({ embeds: [successEmbed], components: [] });
     },
   });
+
+  // Global button listener for giveaway claim button
+  client.buttons.set(/^cgw_claim_/, {
+    customId: /^cgw_claim_/,
+    execute: async (interaction) => {
+      const giveawayId = interaction.customId.replace('cgw_claim_', '');
+      const giveaway = activeGiveaways.get(giveawayId);
+
+      if (!giveaway || !giveaway.active) {
+        await interaction.reply({
+          content: '❌ This giveaway has ended or is no longer active!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check 1: Host / Dev cannot claim their own giveaway
+      if (interaction.user.id === giveaway.hostId) {
+        await interaction.reply({
+          content: '🚫 As the host, you cannot claim your own giveaway to keep it fair for community members!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check 2: Already claimed or currently processing (Anti-Multi-Click / Race Condition)
+      if (giveaway.claimedUserIds.has(interaction.user.id) || giveaway.claimedQueue.has(interaction.user.id)) {
+        await interaction.reply({
+          content: '❌ You have already claimed this giveaway! (Limit: 1 claim per user)',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check 3: Slot limit reached
+      if (giveaway.maxWinners !== null && giveaway.claimedUserIds.size >= giveaway.maxWinners) {
+        giveaway.active = false;
+        const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
+        const { embed, row } = renderGiveaway(giveaway, currencyEmoji);
+        await interaction.message.edit({ embeds: [embed], components: [row] }).catch(() => null);
+        await interaction.reply({
+          content: '❌ All giveaway slots have already been claimed! Better luck next time.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check 4: User must be registered in economy system via creg
+      const isRegistered = await gambleService.isUserRegistered(interaction.user.id);
+      if (!isRegistered) {
+        await interaction.reply({
+          content: '🚫 | You must register first using `creg` before you can claim this giveaway!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Acquire mutex lock for this user
+      giveaway.claimedQueue.add(interaction.user.id);
+
+      try {
+        // Atomic balance update
+        const claimRes = await gambleService.claimGiveaway(
+          interaction.user.id,
+          giveaway.rewardPerUser,
+          interaction.user.username,
+        );
+
+        giveaway.claimedUserIds.add(interaction.user.id);
+        giveaway.claimedQueue.delete(interaction.user.id);
+
+        const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
+
+        // Ephemeral success notification to the user
+        await interaction.reply({
+          content: `🎉 **Congratulations, <@${interaction.user.id}>!** You successfully claimed ${currencyEmoji} **${formatCash(giveaway.rewardPerUser)} Cozy Cash**!\n💰 Your new Cash balance: \`${formatCash(claimRes.newBalance)}\``,
+          ephemeral: true,
+        });
+
+        // Check if giveaway is now completed
+        if (giveaway.maxWinners !== null && giveaway.claimedUserIds.size >= giveaway.maxWinners) {
+          giveaway.active = false;
+        }
+
+        // Update the channel message with latest slot status
+        const { embed, row } = renderGiveaway(giveaway, currencyEmoji);
+        await interaction.message.edit({ embeds: [embed], components: [row] }).catch(() => null);
+
+      } catch (err) {
+        giveaway.claimedQueue.delete(interaction.user.id);
+        logger.error({ err }, 'Error processing giveaway claim:');
+        if (!interaction.replied) {
+          await interaction.reply({
+            content: '❌ Failed to process your claim due to a server error. Please try again.',
+            ephemeral: true,
+          });
+        }
+      }
+    },
+  });
+
+  // Global button listener for giveaway end button
+  client.buttons.set(/^cgw_end_/, {
+    customId: /^cgw_end_/,
+    execute: async (interaction) => {
+      const giveawayId = interaction.customId.replace('cgw_end_', '');
+      const giveaway = activeGiveaways.get(giveawayId);
+
+      if (!giveaway || !giveaway.active) {
+        await interaction.reply({
+          content: 'ℹ️ This giveaway is already ended or inactive.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Only developers or host can end the giveaway
+      if (!isDeveloper(interaction.user, interaction.guild, client) && interaction.user.id !== giveaway.hostId) {
+        await interaction.reply({
+          content: '🚫 Only the host or bot developers can end this giveaway!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      giveaway.active = false;
+      const currencyEmoji = GambleAssets.getCurrency(interaction.guild);
+      const { embed, row } = renderGiveaway(giveaway, currencyEmoji);
+
+      await interaction.message.edit({ embeds: [embed], components: [row] }).catch(() => null);
+      await interaction.reply({
+        content: `🛑 Giveaway has been successfully closed by <@${interaction.user.id}>! Total claimed: **${giveaway.claimedUserIds.size} members**.`,
+        ephemeral: true,
+      });
+    },
+  });
 }
 
 function formatCooldown(ms: number): string {
@@ -586,6 +823,11 @@ const GAMBLE_COMMANDS = new Set([
   'cgivecash',
   'csetcash',
   'cozysetcash',
+  'cgiveaway',
+  'cgw',
+  'cozygiveaway',
+  'cairdrop',
+  'cozyairdrop',
 ]);
 
 const COZY_SUBCOMMANDS = new Set([
@@ -608,6 +850,9 @@ const COZY_SUBCOMMANDS = new Set([
   'mine',
   'coinflip',
   'cf',
+  'giveaway',
+  'gw',
+  'airdrop',
 ]);
 
 export async function handleGambleTextMessage(client: CozyClient, message: Message): Promise<boolean> {
@@ -679,6 +924,186 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       logger.error({ err }, 'Error handling dev cash command:');
       await message.reply({ content: '❌ Gagal mengeksekusi developer cash command.' });
     }
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // DEVELOPER GIVEAWAY / AIRDROP: cgiveaway, cgw, cairdrop (Strictly Dev/Owner Only)
+  // -------------------------------------------------------------
+  const isGiveawayCommand =
+    firstWord === 'cgiveaway' ||
+    firstWord === 'cgw' ||
+    firstWord === 'cozygiveaway' ||
+    firstWord === 'cairdrop' ||
+    firstWord === 'cozyairdrop' ||
+    (firstWord === 'cozy' && (secondWord === 'giveaway' || secondWord === 'gw' || secondWord === 'airdrop'));
+
+  if (isGiveawayCommand) {
+    if (!isDeveloper(user, guild, client)) {
+      await message.reply({ content: '🚫 You do not have developer permission to use this command!' });
+      return true;
+    }
+
+    const commandArgs = firstWord === 'cozy' ? args.slice(2) : args.slice(1);
+    const subAction = commandArgs[0]?.toLowerCase();
+
+    // Check if ending an existing giveaway: cgw end [id]
+    if (subAction === 'end' || subAction === 'stop') {
+      const targetId = commandArgs[1];
+      let found: GiveawaySession | undefined;
+
+      if (targetId) {
+        found = activeGiveaways.get(targetId);
+      } else {
+        // Find active giveaway in this channel
+        for (const [_, gw] of activeGiveaways) {
+          if (gw.channelId === message.channel.id && gw.active) {
+            found = gw;
+            break;
+          }
+        }
+      }
+
+      if (!found || !found.active) {
+        await message.reply({ content: 'ℹ️ Tidak ada giveaway yang sedang aktif di channel ini.' });
+        return true;
+      }
+
+      found.active = false;
+      const { embed, row } = renderGiveaway(found, currencyEmoji);
+      try {
+        if (found.messageId) {
+          const msg = await (message.channel as any).messages?.fetch(found.messageId).catch(() => null);
+          if (msg) {
+            await msg.edit({ embeds: [embed], components: [row] });
+          }
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Could not edit giveaway message on end:');
+      }
+
+      await message.reply({
+        content: `🛑 Giveaway telah berhasil dihentikan oleh developer! Total klaim: **${found.claimedUserIds.size} member**.`,
+      });
+      return true;
+    }
+
+    // If no arguments or help/template requested: show developer template helper
+    if (!commandArgs[0] || subAction === 'help' || subAction === 'template') {
+      const helperEmbed = new EmbedBuilder()
+        .setColor(COLORS.PRIMARY)
+        .setTitle('👑 [Developer Giveaway Helper] — Template & Panduan')
+        .setDescription(
+          `Gunakan format berikut untuk membuat giveaway Cozy Cash baru:\n\n` +
+          `**1️⃣ Format Pool & Nominal Per Member**\n` +
+          `\`cgw <total_pool> <per_user>\`\n` +
+          `Contoh: \`cgw 5m 100k\` atau \`cgw 5000000 50000\`\n` +
+          `*(Bot otomatis menghitung kuota: 5M / 100k = 50 pemenang)*\n\n` +
+          `**2️⃣ Format Pool & Kuota Pemenang**\n` +
+          `\`cgw <total_pool> <jumlah_orang>\`\n` +
+          `Contoh: \`cgw 5m 50\` atau \`cgw 2m 20\`\n` +
+          `*(Bot otomatis membagi rata: 5M / 50 orang = 100k per pemenang)*\n\n` +
+          `**3️⃣ Format Open Airdrop (Siapa Saja Boleh Klaim)**\n` +
+          `\`cgw <nominal> all\`\n` +
+          `Contoh: \`cgw 50k all\`\n` +
+          `*(Semua member boleh klaim 50k sampai developer mengetik \`cgw end\`)*\n\n` +
+          `**4️⃣ Menghentikan Giveaway Aktif**\n` +
+          `\`cgw end\` (Menghentikan giveaway aktif di channel saat ini)`
+        )
+        .setFooter({ text: 'Cozy For Us • Developer Engine' });
+
+      await message.reply({ embeds: [helperEmbed] });
+      return true;
+    }
+
+    // Parsing arguments:
+    const arg1 = commandArgs[0];
+    const arg2 = commandArgs[1]?.toLowerCase();
+
+    let totalPool = 0n;
+    let rewardPerUser = 0n;
+    let maxWinners: number | null = null;
+
+    if (arg2 === 'all') {
+      const parsedReward = parseNominal(arg1);
+      if (!parsedReward.valid || !parsedReward.amount || parsedReward.amount <= 0n) {
+        await message.reply({ content: '❌ Masukkan nominal reward per user yang valid! (Contoh: `cgw 50k all`)' });
+        return true;
+      }
+      rewardPerUser = parsedReward.amount;
+      totalPool = rewardPerUser * 1000n;
+      maxWinners = null;
+    } else {
+      const parsedArg1 = parseNominal(arg1);
+      if (!parsedArg1.valid || !parsedArg1.amount || parsedArg1.amount <= 0n) {
+        await message.reply({ content: '❌ Masukkan nominal total pool yang valid! (Contoh: `cgw 5m 100k` atau `cgw 5m 50`)' });
+        return true;
+      }
+      totalPool = parsedArg1.amount;
+
+      if (!arg2) {
+        await message.reply({
+          content: '❌ Tentukan nominal per user atau jumlah pemenang! (Contoh: `cgw 5m 100k`, `cgw 5m 50`, atau `cgw 50k all`)',
+        });
+        return true;
+      }
+
+      // Check if arg2 is a number of winners (e.g. 50, 10, 100) or a nominal (e.g. 100k, 50k)
+      if (/^\d+$/.test(arg2) && !arg2.includes('k') && !arg2.includes('m')) {
+        const count = parseInt(arg2, 10);
+        if (count <= 0 || count > 1000) {
+          await message.reply({ content: '❌ Jumlah pemenang harus antara 1 sampai 1000 orang!' });
+          return true;
+        }
+        maxWinners = count;
+        rewardPerUser = totalPool / BigInt(count);
+        if (rewardPerUser <= 0n) {
+          await message.reply({ content: '❌ Total pool terlalu kecil untuk dibagi ke jumlah pemenang tersebut!' });
+          return true;
+        }
+      } else {
+        // arg2 is nominal per user (e.g. 100k, 50k)
+        const parsedArg2 = parseNominal(arg2);
+        if (!parsedArg2.valid || !parsedArg2.amount || parsedArg2.amount <= 0n) {
+          await message.reply({ content: '❌ Masukkan nominal per user yang valid! (Contoh: `cgw 5m 100k` atau `cgw 5m 50`)' });
+          return true;
+        }
+        rewardPerUser = parsedArg2.amount;
+        if (rewardPerUser > totalPool) {
+          await message.reply({ content: '❌ Nominal per user tidak boleh melebihi total pool!' });
+          return true;
+        }
+        maxWinners = Number(totalPool / rewardPerUser);
+      }
+    }
+
+    const gwId = crypto.randomUUID().slice(0, 8);
+    const hostAvatar = member?.displayAvatarURL() || user.displayAvatarURL();
+
+    const session: GiveawaySession = {
+      id: gwId,
+      channelId: message.channel.id,
+      hostId: user.id,
+      hostDisplayName: displayName,
+      hostAvatarUrl: hostAvatar,
+      totalPool,
+      rewardPerUser,
+      maxWinners,
+      claimedUserIds: new Set<string>(),
+      claimedQueue: new Set<string>(),
+      active: true,
+      createdAt: Date.now(),
+    };
+
+    activeGiveaways.set(gwId, session);
+
+    const { embed, row } = renderGiveaway(session, currencyEmoji);
+    const sentMsg = await message.reply({
+      embeds: [embed],
+      components: [row],
+    });
+
+    session.messageId = sentMsg.id;
     return true;
   }
 
