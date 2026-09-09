@@ -1036,7 +1036,7 @@ export class GambleService {
     guild?: any,
   ): Promise<CatWalkStepResult | null> {
     const session = this.activeCatWalkGames.get(discordId);
-    if (!session || session.isGameOver || session.isCashedOut || session.isBusy) return null;
+    if (!session || session.isGameOver || session.isCashedOut) return null;
 
     session.isBusy = true;
     session.lastActionAt = Date.now();
@@ -1109,7 +1109,7 @@ export class GambleService {
    */
   public async cashOutCatWalk(discordId: string): Promise<CatWalkCashOutResult> {
     const session = this.activeCatWalkGames.get(discordId);
-    if (!session || session.isGameOver || session.isCashedOut || session.currentStep === 0 || session.isBusy) {
+    if (!session || session.isGameOver || session.isCashedOut || session.currentStep === 0) {
       return {
         success: false,
         error: 'NO_ACTIVE_GAME',

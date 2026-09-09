@@ -355,25 +355,28 @@ export function registerGambleComponents(client: CozyClient) {
   client.buttons.set(/^ccat_step_/, {
     customId: /^ccat_step_/,
     execute: async (interaction) => {
+      // 1. Immediately acknowledge interaction to Discord within 20ms
+      await interaction.deferUpdate().catch(() => null);
+
       const match = interaction.customId.match(/^ccat_step_(\d+)$/);
       if (!match) return;
 
       const targetUserId = match[1];
 
       if (interaction.user.id !== targetUserId) {
-        await interaction.reply({
+        await interaction.followUp({
           content: '❌ This is not your Cat Walk game!',
           ephemeral: true,
-        });
+        }).catch(() => null);
         return;
       }
 
       const session = gambleService.getCatWalkGame(targetUserId);
       if (!session || session.isGameOver || session.isCashedOut) {
-        await interaction.reply({
+        await interaction.followUp({
           content: '❌ This Cat Walk game is no longer active!',
           ephemeral: true,
-        });
+        }).catch(() => null);
         return;
       }
 
@@ -381,8 +384,6 @@ export function registerGambleComponents(client: CozyClient) {
         return;
       }
       session.isBusy = true;
-
-      await interaction.deferUpdate();
 
       try {
         const stepRes = await gambleService.stepCatWalk(targetUserId, interaction.guild);
@@ -398,8 +399,11 @@ export function registerGambleComponents(client: CozyClient) {
           setupCatWalkTimeout(client, session);
         }
       } catch (err) {
-        session.isBusy = false;
         logger.error({ err }, 'Error in CatWalk step button:');
+      } finally {
+        if (session && !session.isGameOver) {
+          session.isBusy = false;
+        }
       }
     },
   });
@@ -408,25 +412,28 @@ export function registerGambleComponents(client: CozyClient) {
   client.buttons.set(/^ccat_cashout_/, {
     customId: /^ccat_cashout_/,
     execute: async (interaction) => {
+      // 1. Immediately acknowledge interaction to Discord within 20ms
+      await interaction.deferUpdate().catch(() => null);
+
       const match = interaction.customId.match(/^ccat_cashout_(\d+)$/);
       if (!match) return;
 
       const targetUserId = match[1];
 
       if (interaction.user.id !== targetUserId) {
-        await interaction.reply({
+        await interaction.followUp({
           content: '❌ This is not your Cat Walk game!',
           ephemeral: true,
-        });
+        }).catch(() => null);
         return;
       }
 
       const session = gambleService.getCatWalkGame(targetUserId);
       if (!session || session.isGameOver || session.isCashedOut || session.currentStep === 0) {
-        await interaction.reply({
+        await interaction.followUp({
           content: '❌ This Cat Walk game is no longer active!',
           ephemeral: true,
-        });
+        }).catch(() => null);
         return;
       }
 
@@ -434,8 +441,6 @@ export function registerGambleComponents(client: CozyClient) {
         return;
       }
       session.isBusy = true;
-
-      await interaction.deferUpdate();
 
       try {
         const cashOutRes = await gambleService.cashOutCatWalk(targetUserId);
@@ -447,8 +452,11 @@ export function registerGambleComponents(client: CozyClient) {
           components: [container.toJSON()] as any,
         }).catch(() => null);
       } catch (err) {
-        session.isBusy = false;
         logger.error({ err }, 'Error in CatWalk cashout button:');
+      } finally {
+        if (session && !session.isGameOver) {
+          session.isBusy = false;
+        }
       }
     },
   });
@@ -989,8 +997,8 @@ function renderCatWalkContainer(
     }
   }
 
-  const row1Str = tiles.slice(0, 5).join(' ');
-  const row2Str = tiles.slice(5, 10).join(' ');
+  const row1Str = `🐾 **Steps 1–5:**   ${tiles.slice(0, 5).join(' ')}`;
+  const row2Str = `🏁 **Steps 6–10:** ${tiles.slice(5, 10).join(' ')}`;
 
   const textLines = [
     header,
