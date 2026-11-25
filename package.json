@@ -1,7 +1,7 @@
 {
   "name": "cozy-bot",
   "version": "1.0.0",
-  "description": "Official Bot of Cozy For Us Community — Discord Bot + Web Dashboard",
+  "description": "Official Minigames & Economy Discord Bot for Cozy For Us Community",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx --dns-result-order=ipv4first src/index.ts",

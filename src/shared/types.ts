@@ -43,17 +43,3 @@ export interface ModalHandler {
   customId: string | RegExp;
   execute: (interaction: ModalSubmitInteraction, client: CozyClient) => Promise<void>;
 }
-
-export interface ApiResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: {
-    code: string;
-    message: string;
-  };
-  meta?: {
-    total?: number;
-    page?: number;
-    perPage?: number;
-  };
-}

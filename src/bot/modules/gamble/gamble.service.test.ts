@@ -14,9 +14,6 @@ vi.mock('../../../shared/database', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
-    auditLog: {
-      create: vi.fn(),
-    },
     $transaction: vi.fn(async (cb) => {
       if (typeof cb === 'function') {
         return cb(prisma);

@@ -12,7 +12,6 @@ export const COLORS = {
 } as const;
 
 export const EMOJI = {
-  VERIFY: '✅',
   STREAK: '🔥',
   HEART_WHITE: '🤍',
   HEART_BLACK: '🖤',
@@ -22,6 +21,4 @@ export const EMOJI = {
 
 export const BOT_DEFAULTS = {
   FOOTER_TEXT: 'Cozy For Us 🤍',
-  SERVER_PORT: 30252,
-  SERVER_IP: '0.0.0.0',
 } as const;

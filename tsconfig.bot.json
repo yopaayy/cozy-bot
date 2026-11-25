@@ -7,7 +7,6 @@
   "include": ["src/**/*"],
   "exclude": [
     "src/**/*.test.ts",
-    "src/dashboard/**/*",
     "node_modules",
     "dist"
   ]

@@ -21,8 +21,6 @@ export const event: Event<Events.MessageCreate> = {
         await message.reply({ content: '❌ Terjadi kesalahan saat memproses perintah.' }).catch(() => null);
       }
     }
-
-    // Text Leveling XP tracking will attach here in Fase 4
   },
 };
 
