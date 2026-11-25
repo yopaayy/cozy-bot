@@ -9,14 +9,13 @@ try {
 import { CozyClient } from './bot/client';
 import { loadCommands } from './bot/handlers/command-handler';
 import { loadEvents } from './bot/handlers/event-handler';
-import { createApiServer } from './api/server';
 import { config } from './shared/config';
 import { logger } from './shared/logger';
 import { prisma } from './shared/database';
 
 async function bootstrap() {
   logger.info('=============================================');
-  logger.info('  Starting Cozy Bot + API System 🤍');
+  logger.info('  Starting Cozy Bot 🤍');
   logger.info(`  Node Env: ${config.NODE_ENV}`);
   logger.info(`  Guild ID: ${config.GUILD_ID}`);
   logger.info('=============================================');
@@ -46,19 +45,7 @@ async function bootstrap() {
   await loadCommands(client);
   await loadEvents(client);
 
-  // 4. Start Fastify API Server
-  const fastify = await createApiServer(client);
-  try {
-    await fastify.listen({
-      port: config.SERVER_PORT,
-      host: config.SERVER_IP,
-    });
-    logger.info(`[API] Server listening on http://${config.SERVER_IP}:${config.SERVER_PORT}`);
-  } catch (apiErr) {
-    logger.error({ err: apiErr }, `[API] Failed to start Fastify server on port ${config.SERVER_PORT}:`);
-  }
-
-  // 5. Login Bot to Discord
+  // 4. Login Bot to Discord
   try {
     logger.info('[Bot] Logging into Discord...');
     await client.login(config.DISCORD_TOKEN);
@@ -67,7 +54,7 @@ async function bootstrap() {
     logger.error({ err: loginErr }, '[Bot] Failed to login to Discord:');
   }
 
-  // 6. Graceful Shutdown Handlers
+  // 5. Graceful Shutdown Handlers
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}. Shutting down gracefully...`);
     try {
@@ -75,13 +62,6 @@ async function bootstrap() {
       logger.info('[Bot] Discord client destroyed.');
     } catch (e) {
       logger.error({ err: e }, 'Error destroying Discord client:');
-    }
-
-    try {
-      await fastify.close();
-      logger.info('[API] Fastify server closed.');
-    } catch (e) {
-      logger.error({ err: e }, 'Error closing Fastify server:');
     }
 
     try {

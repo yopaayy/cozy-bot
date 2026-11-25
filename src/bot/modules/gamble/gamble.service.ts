@@ -1,6 +1,5 @@
 import { prisma } from '../../../shared/database';
 import { logger } from '../../../shared/logger';
-import { logAudit } from '../../../shared/audit-logger';
 import { SlotsEngine } from './engines/SlotsEngine';
 import { MinesEngine } from './engines/MinesEngine';
 import { CoinflipEngine } from './engines/CoinflipEngine';
@@ -772,20 +771,6 @@ export class GambleService {
         data: updateData,
       });
 
-      await logAudit({
-        actorDiscordId,
-        action: 'DEV_RESET_USER',
-        source: 'discord_bot',
-        detail: {
-          targetDiscordId: discordId,
-          targetType,
-          prevCash: prevCash.toString(),
-          prevBank: prevBank.toString(),
-          newCash: updated.cozyCash.toString(),
-          newBank: updated.cozyBank.toString(),
-        },
-      });
-
       return {
         cash: updated.cozyCash,
         bank: updated.cozyBank,
@@ -812,16 +797,6 @@ export class GambleService {
 
       const result = await prisma.users.updateMany({
         data: updateData,
-      });
-
-      await logAudit({
-        actorDiscordId,
-        action: 'DEV_RESET_ALL_USERS',
-        source: 'discord_bot',
-        detail: {
-          targetType,
-          affectedCount: result.count,
-        },
       });
 
       return {
@@ -917,23 +892,6 @@ export class GambleService {
           },
         });
 
-        await logAudit({
-          actorDiscordId,
-          action: 'DEV_DECREASE_BALANCE',
-          source: 'discord_bot',
-          detail: {
-            targetDiscordId: discordId,
-            targetType,
-            requestedAmount: amount.toString(),
-            deductedCash: deductedCash.toString(),
-            deductedBank: deductedBank.toString(),
-            totalDeducted: totalDeducted.toString(),
-            prevCash: user.cozyCash.toString(),
-            prevBank: user.cozyBank.toString(),
-            newCash: updated.cozyCash.toString(),
-            newBank: updated.cozyBank.toString(),
-          },
-        });
 
         return {
           cash: updated.cozyCash,
