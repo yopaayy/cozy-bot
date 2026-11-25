@@ -38,6 +38,7 @@ export interface UserBalanceData {
   isRegistered: boolean;
   cash: bigint;
   bank: bigint;
+  hideBank: boolean;
   total: bigint;
   dailyStreak: number;
   lastDaily: Date | null;
@@ -75,7 +76,9 @@ export interface LeaderboardEntry {
   username: string | null;
   cash: bigint;
   bank: bigint;
+  hideBank: boolean;
   total: bigint;
+  effectiveBank?: bigint;
 }
 
 export interface MinesGameSession {
@@ -210,3 +213,92 @@ export interface PvPDuelResult {
 }
 
 
+
+
+// ==========================================
+//  BLACKJACK 21 TYPES
+// ==========================================
+
+export interface BlackjackCard {
+  card: number;  // 1-52 card ID
+  hidden: boolean;
+}
+
+export interface HandEvaluation {
+  points: number;
+  isBust: boolean;
+  hasSoftAce: boolean;
+  cards: ParsedCard[];
+}
+
+export interface ParsedCard {
+  id: number;
+  rank: string;
+  suit: string;
+  value: number;
+  hidden: boolean;
+}
+
+export interface BlackjackGameState {
+  success: boolean;
+  error?: string;
+  bet: bigint;
+  initialBet: bigint;
+  deck: number[];
+  playerHand: BlackjackCard[];
+  dealerHand: BlackjackCard[];
+  playerScore: number;
+  dealerVisibleScore: number;
+  isNaturalBlackjack: boolean;
+  isDoubleDown: boolean;
+  isGameOver: boolean;
+  result: BlackjackResult | null;
+  timestamp: number;
+}
+
+export interface BlackjackResult {
+  outcome: 'win' | 'lose' | 'tie';
+  reason: string;
+  playerScore: number;
+  dealerScore: number;
+  bet: bigint;
+  payout: bigint;
+  netProfit: bigint;
+  multiplier: number;
+}
+
+export interface BlackjackDuelPlayer {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  hand: BlackjackCard[];
+  score: number;
+  status: 'playing' | 'waiting' | 'stood' | 'bust' | 'natural';
+}
+
+export interface BlackjackDuelState {
+  success: boolean;
+  error?: string;
+  p1: BlackjackDuelPlayer;
+  p2: BlackjackDuelPlayer;
+  currentTurn: string;
+  bet: bigint;
+  totalPot: bigint;
+  deck: number[];
+  isGameOver: boolean;
+  result: BlackjackDuelResult | null;
+  timestamp: number;
+}
+
+export interface BlackjackDuelResult {
+  outcome: 'p1_win' | 'p2_win' | 'tie';
+  winnerId: string | null;
+  winnerName: string | null;
+  loserId: string | null;
+  reason: string;
+  bet: bigint;
+  totalPot: bigint;
+  p1Score: number;
+  p2Score: number;
+}

@@ -14,15 +14,61 @@ import type { CozyClient } from '../../client';
 import { gambleService } from './gamble.service';
 import { GambleAssets } from './gamble.assets';
 import { SlotsEngine } from './engines/SlotsEngine';
+import { BlackjackEngine } from './engines/BlackjackEngine';
 import { formatCash, parseNominal } from './gamble.utils';
-import type { MinesGameSession, CatWalkSession, PvPDuelSession, CoinflipSide } from './gamble.types';
+import type { MinesGameSession, CatWalkSession, PvPDuelSession, CoinflipSide, BlackjackGameState, BlackjackDuelState } from './gamble.types';
 import { COLORS, BOT_DEFAULTS } from '../../../shared/constants';
 import { config } from '../../../shared/config';
 import { logger } from '../../../shared/logger';
+import crypto from 'crypto';
+import {
+  renderHelpEmbed,
+  renderHelpComponents,
+  renderDevHelpEmbed,
+  activeHelpSessions,
+  HELP_CATEGORIES,
+} from './gamble.help';
 
 const slotsEngine = new SlotsEngine();
 const activeSpinners = new Set<string>();
 const activeCoinflips = new Set<string>();
+const activeBlackjackPlayers = new Set<string>();
+
+interface BlackjackSoloSession {
+  sessionId: string;
+  userId: string;
+  displayName: string;
+  userObj: { id: string; username: string; displayAvatarURL: () => string };
+  gameState: BlackjackGameState;
+  message?: Message;
+  timeoutHandle?: NodeJS.Timeout;
+  isProcessing?: boolean;
+}
+
+interface BlackjackPendingDuel {
+  duelId: string;
+  challengerId: string;
+  challengerDisplayName: string;
+  challengerAvatarUrl: string;
+  targetId: string;
+  targetDisplayName: string;
+  targetAvatarUrl: string;
+  bet: bigint;
+  message?: Message;
+  timeoutHandle?: NodeJS.Timeout;
+}
+
+interface BlackjackDuelSessionData {
+  duelId: string;
+  duelState: BlackjackDuelState;
+  message?: Message;
+  timeoutHandle?: NodeJS.Timeout;
+  isProcessing?: boolean;
+}
+
+const activeBlackjackSessions = new Map<string, BlackjackSoloSession>();
+const pendingBlackjackDuels = new Map<string, BlackjackPendingDuel>();
+const activeBlackjackDuelSessions = new Map<string, BlackjackDuelSessionData>();
 const coinflipCooldowns = new Map<string, number>();
 const slotsCooldowns = new Map<string, number>();
 
@@ -62,6 +108,17 @@ interface GiveawaySession {
 }
 
 const activeGiveaways = new Map<string, GiveawaySession>();
+
+interface DevResetSession {
+  sessionId: string;
+  developerId: string;
+  channelId: string;
+  messageId?: string;
+  targetType: 'cash' | 'bank' | 'all';
+  createdAt: number;
+}
+
+const activeResetSessions = new Map<string, DevResetSession>();
 
 function renderGiveaway(giveaway: GiveawaySession, currencyEmoji: string) {
   const claimedCount = giveaway.claimedUserIds.size;
@@ -1022,6 +1079,516 @@ export function registerGambleComponents(client: CozyClient) {
       }
     },
   });
+
+  // Global button listener for dev_reset confirmation
+  client.buttons.set(/^dev_reset_(confirm|cancel)_/, {
+    customId: /^dev_reset_(confirm|cancel)_/,
+    execute: async (interaction) => {
+      const match = interaction.customId.match(/^dev_reset_(confirm|cancel)_(.+)$/);
+      if (!match) return;
+      const action = match[1];
+      const sessionId = match[2];
+
+      const session = activeResetSessions.get(sessionId);
+      if (!session) {
+        await interaction.reply({
+          content: '⌛ Sesi konfirmasi reset ini sudah kadaluarsa atau tidak valid.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== session.developerId) {
+        await interaction.reply({
+          content: '🚫 Hanya developer inisiator yang berhak mengonfirmasi reset server ini!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (!isDeveloper(interaction.user, interaction.guild, client)) {
+        await interaction.reply({
+          content: '🚫 You do not have developer permission to use this command!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      activeResetSessions.delete(sessionId);
+
+      if (action === 'cancel') {
+        const cancelEmbed = new EmbedBuilder()
+          .setColor(COLORS.DARK)
+          .setTitle('❌ [RESET CANCELLED] Server Wipe Dibatalkan')
+          .setDescription(`Server economy reset untuk target \`${session.targetType.toUpperCase()}\` dibatalkan oleh developer.`)
+          .setTimestamp();
+        await interaction.update({ embeds: [cancelEmbed], components: [] });
+        return;
+      }
+
+      // action === 'confirm'
+      await interaction.deferUpdate();
+
+      try {
+        const res = await gambleService.devResetAll(session.targetType, interaction.user.id);
+        const successEmbed = new EmbedBuilder()
+          .setColor(COLORS.SUCCESS)
+          .setTitle('✅ [SERVER ECONOMY WIPED] Reset Massal Selesai')
+          .setDescription(
+            `Berhasil mengosongkan saldo **${res.targetType.toUpperCase()}** untuk **${res.affectedCount}** user di database!\n\n` +
+            `👑 **Eksekutor:** <@${interaction.user.id}>\n` +
+            `🕒 **Waktu:** <t:${Math.floor(Date.now() / 1000)}:F>`
+          )
+          .setFooter({ text: 'Cozy For Us • Economy Maintenance System' })
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [successEmbed], components: [] });
+      } catch (err) {
+        logger.error({ err }, 'Error executing devResetAll in button handler:');
+        await interaction.followUp({
+          content: '❌ Gagal mengeksekusi reset massal server di database.',
+          ephemeral: true,
+        });
+      }
+    },
+  });
+
+  // Global select menu listener for chelp category selection
+  client.selectMenus.set(/^chelp_cat_/, {
+    customId: /^chelp_cat_/,
+    execute: async (interaction) => {
+      const sessionId = interaction.customId.replace('chelp_cat_', '');
+      const session = activeHelpSessions.get(sessionId);
+
+      if (!session) {
+        await interaction.reply({
+          content: '⌛ Sesi menu panduan ini sudah kadaluarsa. Ketik `chelp` untuk membuka panduan baru!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== session.userId) {
+        await interaction.reply({
+          content: '❌ Menu bantuan ini hanya dapat dikendalikan oleh pembuat perintah. Ketik `chelp` untuk membuka menu milikmu sendiri!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const selectedCatId = interaction.values[0];
+      const selectedIndex = HELP_CATEGORIES.findIndex((c) => c.id === selectedCatId);
+
+      if (selectedIndex !== -1) {
+        session.currentPage = selectedIndex;
+        session.lastActive = Date.now();
+      }
+
+      const embed = renderHelpEmbed(session, interaction.guild);
+      const components = renderHelpComponents(session);
+
+      await interaction.update({ embeds: [embed], components });
+    },
+  });
+
+  // Global button listener for chelp navigation & language toggle
+  client.buttons.set(/^chelp_(prev|next|lang)_/, {
+    customId: /^chelp_(prev|next|lang)_/,
+    execute: async (interaction) => {
+      const match = interaction.customId.match(/^chelp_(prev|next|lang)_(.+)$/);
+      if (!match) return;
+      const action = match[1];
+      const sessionId = match[2];
+
+      const session = activeHelpSessions.get(sessionId);
+      if (!session) {
+        await interaction.reply({
+          content: '⌛ Sesi menu panduan ini sudah kadaluarsa. Ketik `chelp` untuk membuka panduan baru!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (interaction.user.id !== session.userId) {
+        await interaction.reply({
+          content: '❌ Menu bantuan ini hanya dapat dikendalikan oleh pembuat perintah. Ketik `chelp` untuk membuka menu milikmu sendiri!',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      session.lastActive = Date.now();
+
+      if (action === 'prev') {
+        session.currentPage = Math.max(0, session.currentPage - 1);
+      } else if (action === 'next') {
+        session.currentPage = Math.min(HELP_CATEGORIES.length - 1, session.currentPage + 1);
+      } else if (action === 'lang') {
+        session.language = session.language === 'ID' ? 'EN' : 'ID';
+      }
+
+      const embed = renderHelpEmbed(session, interaction.guild);
+      const components = renderHelpComponents(session);
+
+      await interaction.update({ embeds: [embed], components });
+    },
+  });
+
+  // Global button listener for Solo Blackjack (cbj)
+  client.buttons.set(/^bj_(hit|stand|double)_/, {
+    customId: /^bj_(hit|stand|double)_/,
+    execute: async (interaction) => {
+      // 1. Immediately acknowledge interaction to Discord within 20ms to prevent timeout
+      await interaction.deferUpdate().catch(() => null);
+
+      const match = interaction.customId.match(/^bj_(hit|stand|double)_(.+)$/);
+      if (!match) return;
+
+      const action = match[1];
+      const sessionId = match[2];
+
+      const session = activeBlackjackSessions.get(sessionId);
+      if (!session) {
+        await interaction.followUp({
+          content: '⚠️ | Sesi Blackjack ini sudah berakhir atau kedaluwarsa.',
+          ephemeral: true,
+        }).catch(() => null);
+        return;
+      }
+
+      if (interaction.user.id !== session.userId) {
+        await interaction.followUp({
+          content: `❌ | Ini adalah meja bermain milik **${session.displayName}**! Buat taruhan Anda sendiri dengan mengetik \`cbj <bet>\`.`,
+          ephemeral: true,
+        }).catch(() => null);
+        return;
+      }
+
+      if (session.isProcessing) return;
+      session.isProcessing = true;
+
+      // Clear existing timeout
+      if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+      try {
+        const engine = gambleService.getBlackjackEngine();
+        const { gameState, userId, displayName, userObj } = session;
+        const guild = interaction.guild;
+
+        if (action === 'hit') {
+          engine.hit(gameState);
+
+          if (gameState.isGameOver && gameState.result) {
+            await gambleService.applyBlackjackPayout(userId, gameState.result);
+            const finalEmbed = renderBlackjackSoloEmbed(userObj, displayName, gameState, guild!, client);
+            const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId('bj_h_d').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+              new ButtonBuilder().setCustomId('bj_s_d').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+            );
+            await interaction.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+            activeBlackjackPlayers.delete(userId);
+            activeBlackjackSessions.delete(sessionId);
+          } else {
+            // Setup fresh 60s timeout for next decision
+            setupBlackjackSoloTimeout(client, session);
+
+            const updatedEmbed = renderBlackjackSoloEmbed(userObj, displayName, gameState, guild!, client);
+            const updatedButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`bj_hit_${sessionId}`).setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Primary).setEmoji('👊'),
+              new ButtonBuilder().setCustomId(`bj_stand_${sessionId}`).setLabel('Stand (Tahan)').setStyle(ButtonStyle.Danger).setEmoji('🛑'),
+            );
+            await interaction.message.edit({ embeds: [updatedEmbed], components: [updatedButtons] }).catch(() => null);
+          }
+        } else if (action === 'stand') {
+          // Dealer reveal suspense frame
+          const flipGif = GambleAssets.getBlackjackEmoji('card_flip', guild, client);
+          const suspenseEmbed = new EmbedBuilder()
+            .setColor(0x2B2D31)
+            .setAuthor({ name: '⚜️ ROYALE VIP CASINO • SALON PRIVÉ ⚜️', iconURL: userObj.displayAvatarURL() })
+            .setTitle(`${flipGif} DEALER MEMBUKA KARTU TERTUTUP...`)
+            .setDescription(
+              `👤 **${displayName}** memilih **Stand**!\n\n` +
+              `*Dealer sedang membalikkan kartu tertutup dan mengambil kartu sesuai aturan S17...*`
+            );
+          await interaction.message.edit({ embeds: [suspenseEmbed], components: [] }).catch(() => null);
+          await new Promise(r => setTimeout(r, 900));
+
+          engine.stand(gameState);
+          if (gameState.result) await gambleService.applyBlackjackPayout(userId, gameState.result);
+          const finalEmbed = renderBlackjackSoloEmbed(userObj, displayName, gameState, guild!, client);
+          const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('bj_h_d2').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+            new ButtonBuilder().setCustomId('bj_s_d2').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+          );
+          await interaction.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+          activeBlackjackPlayers.delete(userId);
+          activeBlackjackSessions.delete(sessionId);
+        } else if (action === 'double') {
+          const ddResult = await gambleService.blackjackDoubleDown(userId, gameState);
+          if (!ddResult.success) {
+            await interaction.followUp({ content: '❌ | Saldo Anda tidak cukup untuk Double Down!', ephemeral: true }).catch(() => null);
+            setupBlackjackSoloTimeout(client, session);
+          } else {
+            // Double down card draw & dealer reveal suspense frame
+            const flipGif = GambleAssets.getBlackjackEmoji('card_flip', guild, client);
+            const doubleIcon = GambleAssets.getBlackjackEmoji('bj_double', guild, client);
+            const blackChip = GambleAssets.getBlackjackEmoji('card_chip_black', guild, client);
+            const suspenseEmbed = new EmbedBuilder()
+              .setColor(0xF1C40F)
+              .setAuthor({ name: '⚜️ ROYALE VIP CASINO • SALON PRIVÉ ⚜️', iconURL: userObj.displayAvatarURL() })
+              .setTitle(`${doubleIcon} DOUBLE DOWN DIAKTIFKAN! ${flipGif}`)
+              .setDescription(
+                `⚡ **${displayName}** melipatgandakan taruhan menjadi ${blackChip} **${formatCash(gameState.bet)}** Cozy Cash!\n\n` +
+                `*Menarik 1 kartu penentu dan dealer membuka kartu tertutup...*`
+              );
+            await interaction.message.edit({ embeds: [suspenseEmbed], components: [] }).catch(() => null);
+            await new Promise(r => setTimeout(r, 1000));
+
+            if (gameState.result) await gambleService.applyBlackjackPayout(userId, gameState.result);
+            const finalEmbed = renderBlackjackSoloEmbed(userObj, displayName, gameState, guild!, client);
+            const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId('bj_h_d3').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+              new ButtonBuilder().setCustomId('bj_s_d3').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+            );
+            await interaction.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+            activeBlackjackPlayers.delete(userId);
+            activeBlackjackSessions.delete(sessionId);
+          }
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error during BJ solo button interaction:');
+      } finally {
+        session.isProcessing = false;
+      }
+    },
+  });
+
+  // Global button listener for Blackjack PvP duel invitation (cbj duel)
+  client.buttons.set(/^bjpvp_(accept|decline|cancel)_/, {
+    customId: /^bjpvp_(accept|decline|cancel)_/,
+    execute: async (interaction) => {
+      await interaction.deferUpdate().catch(() => null);
+
+      const match = interaction.customId.match(/^bjpvp_(accept|decline|cancel)_(.+)$/);
+      if (!match) return;
+
+      const action = match[1];
+      const duelId = match[2];
+
+      const pending = pendingBlackjackDuels.get(duelId);
+      if (!pending) {
+        await interaction.followUp({ content: '❌ | Tantangan duel ini sudah berakhir atau kedaluwarsa.', ephemeral: true }).catch(() => null);
+        return;
+      }
+
+      if (action === 'cancel') {
+        if (interaction.user.id !== pending.challengerId) {
+          await interaction.followUp({ content: '❌ | Hanya penantang yang dapat membatalkan tantangan ini!', ephemeral: true }).catch(() => null);
+          return;
+        }
+        clearTimeout(pending.timeoutHandle);
+        pendingBlackjackDuels.delete(duelId);
+        activeBlackjackPlayers.delete(pending.challengerId);
+        activeBlackjackPlayers.delete(pending.targetId);
+        await interaction.message.edit({
+          content: `🛑 | Tantangan duel dibatalkan oleh <@${pending.challengerId}>.`,
+          embeds: [], components: [],
+        }).catch(() => null);
+        return;
+      }
+
+      if (interaction.user.id !== pending.targetId) {
+        await interaction.followUp({ content: `❌ | Hanya **${pending.targetDisplayName}** yang dapat merespon tantangan ini!`, ephemeral: true }).catch(() => null);
+        return;
+      }
+
+      if (action === 'decline') {
+        clearTimeout(pending.timeoutHandle);
+        pendingBlackjackDuels.delete(duelId);
+        activeBlackjackPlayers.delete(pending.challengerId);
+        activeBlackjackPlayers.delete(pending.targetId);
+        await interaction.message.edit({
+          content: `❌ | **${pending.targetDisplayName}** menolak tantangan duel.`,
+          embeds: [], components: [],
+        }).catch(() => null);
+        return;
+      }
+
+      if (action === 'accept') {
+        clearTimeout(pending.timeoutHandle);
+        pendingBlackjackDuels.delete(duelId);
+
+        const guild = interaction.guild;
+        const shuffleEmoji = GambleAssets.getBlackjackEmoji('card_shuffle', guild, client);
+        await interaction.message.edit({
+          content: `${shuffleEmoji} | **Tantangan Diterima!**\n*Mengocok deck kasino untuk duel **${pending.challengerDisplayName}** vs **${pending.targetDisplayName}**...*`,
+          embeds: [], components: [],
+        }).catch(() => null);
+
+        await new Promise(r => setTimeout(r, 1200));
+
+        try {
+          const p1Info = { id: pending.challengerId, username: pending.challengerDisplayName, displayName: pending.challengerDisplayName, avatarUrl: pending.challengerAvatarUrl };
+          const p2Info = { id: pending.targetId, username: pending.targetDisplayName, displayName: pending.targetDisplayName, avatarUrl: pending.targetAvatarUrl };
+
+          const duelState = await gambleService.startBlackjackDuel(p1Info, p2Info, pending.bet);
+
+          if (duelState.isGameOver) {
+            await gambleService.applyBlackjackDuelPayout(duelState);
+            const finalEmbed = renderBlackjackDuelEmbed(duelState, guild!, client);
+            const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId('d_h_off').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+              new ButtonBuilder().setCustomId('d_s_off').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+            );
+            await interaction.message.edit({ content: null, embeds: [finalEmbed], components: [disabledRow] }).catch(() => null);
+            activeBlackjackPlayers.delete(pending.challengerId);
+            activeBlackjackPlayers.delete(pending.targetId);
+            return;
+          }
+
+          const duelSession: BlackjackDuelSessionData = {
+            duelId,
+            duelState,
+            message: interaction.message,
+          };
+          activeBlackjackDuelSessions.set(duelId, duelSession);
+          setupBlackjackDuelTimeout(client, duelSession);
+
+          const hitBtn = new ButtonBuilder().setCustomId(`bjd_hit_${duelId}`).setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Primary).setEmoji('👊');
+          const standBtn = new ButtonBuilder().setCustomId(`bjd_stand_${duelId}`).setLabel('Stand (Tahan)').setStyle(ButtonStyle.Danger).setEmoji('🛑');
+          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(hitBtn, standBtn);
+
+          const duelEmbed = renderBlackjackDuelEmbed(duelState, guild!, client);
+          await interaction.message.edit({ content: null, embeds: [duelEmbed], components: [actionRow] }).catch(() => null);
+        } catch (err) {
+          logger.error({ err }, 'Error starting BJ duel:');
+          activeBlackjackPlayers.delete(pending.challengerId);
+          activeBlackjackPlayers.delete(pending.targetId);
+        }
+      }
+    },
+  });
+
+  // Global button listener for Blackjack PvP duel turn buttons (bjd_hit, bjd_stand)
+  client.buttons.set(/^bjd_(hit|stand)_/, {
+    customId: /^bjd_(hit|stand)_/,
+    execute: async (interaction) => {
+      await interaction.deferUpdate().catch(() => null);
+
+      const match = interaction.customId.match(/^bjd_(hit|stand)_(.+)$/);
+      if (!match) return;
+
+      const action = match[1];
+      const duelId = match[2];
+
+      const duelSession = activeBlackjackDuelSessions.get(duelId);
+      if (!duelSession) {
+        await interaction.followUp({ content: '⚠️ | Sesi duel ini sudah selesai atau kedaluwarsa.', ephemeral: true }).catch(() => null);
+        return;
+      }
+
+      const { duelState } = duelSession;
+      if (interaction.user.id !== duelState.currentTurn) {
+        const activeName = duelState.currentTurn === duelState.p1.id ? duelState.p1.displayName : duelState.p2.displayName;
+        await interaction.followUp({ content: `⏳ | Sekarang adalah giliran **${activeName}** untuk mengambil keputusan!`, ephemeral: true }).catch(() => null);
+        return;
+      }
+
+      if (duelSession.isProcessing) return;
+      duelSession.isProcessing = true;
+
+      if (duelSession.timeoutHandle) clearTimeout(duelSession.timeoutHandle);
+
+      try {
+        const engine = gambleService.getBlackjackEngine();
+        const guild = interaction.guild;
+
+        if (action === 'hit') {
+          engine.duelHit(duelState, interaction.user.id);
+        } else if (action === 'stand') {
+          engine.duelStand(duelState, interaction.user.id);
+        }
+
+        if (duelState.isGameOver) {
+          await gambleService.applyBlackjackDuelPayout(duelState);
+          const finalEmbed = renderBlackjackDuelEmbed(duelState, guild!, client);
+          const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('dh_off').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+            new ButtonBuilder().setCustomId('ds_off').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+          );
+          await interaction.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+          activeBlackjackPlayers.delete(duelState.p1.id);
+          activeBlackjackPlayers.delete(duelState.p2.id);
+          activeBlackjackDuelSessions.delete(duelId);
+        } else {
+          setupBlackjackDuelTimeout(client, duelSession);
+
+          const updatedEmbed = renderBlackjackDuelEmbed(duelState, guild!, client);
+          const hitBtn = new ButtonBuilder().setCustomId(`bjd_hit_${duelId}`).setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Primary).setEmoji('👊');
+          const standBtn = new ButtonBuilder().setCustomId(`bjd_stand_${duelId}`).setLabel('Stand (Tahan)').setStyle(ButtonStyle.Danger).setEmoji('🛑');
+          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(hitBtn, standBtn);
+          await interaction.message.edit({ embeds: [updatedEmbed], components: [actionRow] }).catch(() => null);
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error during BJ duel turn action:');
+      } finally {
+        duelSession.isProcessing = false;
+      }
+    },
+  });
+}
+
+function setupBlackjackSoloTimeout(client: any, session: BlackjackSoloSession) {
+  if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+  session.timeoutHandle = setTimeout(async () => {
+    if (session.gameState.isGameOver) return;
+    const engine = gambleService.getBlackjackEngine();
+    engine.stand(session.gameState);
+    if (session.gameState.result) {
+      await gambleService.applyBlackjackPayout(session.userId, session.gameState.result).catch(() => null);
+    }
+    if (session.message) {
+      const finalEmbed = renderBlackjackSoloEmbed(
+        session.userObj,
+        session.displayName,
+        session.gameState,
+        session.message.guild!,
+        client,
+        true,
+      );
+      const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('bj_h_to').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId('bj_s_to').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+      );
+      await session.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+    }
+    activeBlackjackPlayers.delete(session.userId);
+    activeBlackjackSessions.delete(session.sessionId);
+  }, 60_000);
+}
+
+function setupBlackjackDuelTimeout(client: any, session: BlackjackDuelSessionData) {
+  if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+  session.timeoutHandle = setTimeout(async () => {
+    if (session.duelState.isGameOver) return;
+    const engine = gambleService.getBlackjackEngine();
+    engine.duelStand(session.duelState, session.duelState.currentTurn);
+    if (!session.duelState.isGameOver) {
+      engine.duelStand(session.duelState, session.duelState.currentTurn);
+    }
+    await gambleService.applyBlackjackDuelPayout(session.duelState).catch(() => null);
+    if (session.message) {
+      const finalEmbed = renderBlackjackDuelEmbed(session.duelState, session.message.guild!, client, true);
+      const disRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('dh_to').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId('ds_to').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+      );
+      await session.message.edit({ embeds: [finalEmbed], components: [disRow] }).catch(() => null);
+    }
+    activeBlackjackPlayers.delete(session.duelState.p1.id);
+    activeBlackjackPlayers.delete(session.duelState.p2.id);
+    activeBlackjackDuelSessions.delete(session.duelId);
+  }, 120_000);
 }
 
 function formatCooldown(ms: number): string {
@@ -1470,12 +2037,36 @@ const GAMBLE_COMMANDS = new Set([
   'cozyairdrop',
   'cduel',
   'cozyduel',
+  'creset',
+  'cozyreset',
+  'cdec',
+  'cozydec',
+  'creduce',
+  'cozyreduce',
+  'cpotong',
+  'cozypotong',
+  'ctakecash',
+  'chelp',
+  'cozyhelp',
+  'cdev',
+  'cozydev',
+  'cbal',
+  'cbalance',
+  'chidebank',
+  'cozyhidebank',
+  'cshowbank',
+  'cozyshowbank',
+  'ctogglebank',
+  'cozytogglebank',
 ]);
 
 const COZY_SUBCOMMANDS = new Set([
   'cash',
   'bal',
   'balance',
+  'hidebank',
+  'showbank',
+  'togglebank',
   'dep',
   'with',
   'pay',
@@ -1499,6 +2090,13 @@ const COZY_SUBCOMMANDS = new Set([
   'gw',
   'airdrop',
   'duel',
+  'reset',
+  'dec',
+  'reduce',
+  'potong',
+  'takecash',
+  'help',
+  'dev',
 ]);
 
 export async function handleGambleTextMessage(client: CozyClient, message: Message): Promise<boolean> {
@@ -1518,6 +2116,78 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
   const member = message.member || (await guild.members.fetch(user.id).catch(() => null));
   const displayName = member?.displayName || user.displayName || user.username;
   const currencyEmoji = GambleAssets.getCurrency(guild);
+
+  // -------------------------------------------------------------
+  // ALL USERS COMMAND: chelp, cozyhelp (Interactive Bilingual Help)
+  // -------------------------------------------------------------
+  const isHelpCommand =
+    firstWord === 'chelp' ||
+    firstWord === 'cozyhelp' ||
+    (firstWord === 'cozy' && secondWord === 'help');
+
+  if (isHelpCommand) {
+    const sessionId = crypto.randomUUID().slice(0, 8);
+    const session = {
+      sessionId,
+      userId: user.id,
+      currentPage: 0,
+      language: 'ID' as const,
+      lastActive: Date.now(),
+    };
+
+    activeHelpSessions.set(sessionId, session);
+
+    const embed = renderHelpEmbed(session, guild);
+    const components = renderHelpComponents(session);
+
+    const replyMsg = await message.reply({
+      embeds: [embed],
+      components,
+    });
+
+    // Auto-expire session after 3 minutes
+    setTimeout(async () => {
+      if (activeHelpSessions.has(sessionId)) {
+        activeHelpSessions.delete(sessionId);
+        try {
+          // Disable all buttons and menus
+          const disabledComponents = components.map((row) => {
+            const newRow = new ActionRowBuilder<any>();
+            row.components.forEach((c) => {
+              if ('setDisabled' in c) {
+                newRow.addComponents((c as any).setDisabled(true));
+              }
+            });
+            return newRow;
+          });
+          await replyMsg.edit({ components: disabledComponents as any });
+        } catch {
+          // Message may be deleted
+        }
+      }
+    }, 180000);
+
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // DEVELOPER-ONLY COMMAND: cdev, cozydev (Developer Cheat Sheet)
+  // -------------------------------------------------------------
+  const isDevCommand =
+    firstWord === 'cdev' ||
+    firstWord === 'cozydev' ||
+    (firstWord === 'cozy' && secondWord === 'dev');
+
+  if (isDevCommand) {
+    if (!isDeveloper(user, guild, client)) {
+      await message.reply({ content: '🚫 You do not have developer permission to use this command!' });
+      return true;
+    }
+
+    const devEmbed = renderDevHelpEmbed(guild, displayName);
+    await message.reply({ embeds: [devEmbed] });
+    return true;
+  }
 
   // -------------------------------------------------------------
   // DEVELOPER COMMANDS: caddcash, csetcash (Strictly Owner/Dev Only)
@@ -1570,6 +2240,250 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
       logger.error({ err }, 'Error handling dev cash command:');
       await message.reply({ content: '❌ Gagal mengeksekusi developer cash command.' });
     }
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // DEVELOPER COMMAND: creset, cozyreset (Strictly Owner/Dev Only)
+  // -------------------------------------------------------------
+  const isResetCommand =
+    firstWord === 'creset' ||
+    firstWord === 'cozyreset' ||
+    (firstWord === 'cozy' && secondWord === 'reset');
+
+  if (isResetCommand) {
+    if (!isDeveloper(user, guild, client)) {
+      await message.reply({ content: '🚫 You do not have developer permission to use this command!' });
+      return true;
+    }
+
+    const commandArgs = firstWord === 'cozy' ? args.slice(2) : args.slice(1);
+    const firstArg = commandArgs[0]?.toLowerCase();
+
+    // Syntax help if no args provided
+    if (!firstArg) {
+      await message.reply({
+        content:
+          '❌ Format command `creset`:\n' +
+          '• `creset @user [cash|bank|all]` — Reset saldo member tertentu (default: all)\n' +
+          '• `creset self [cash|bank|all]` — Reset saldo akun developer sendiri\n' +
+          '• `creset all [cash|bank|all]` — **Wipe Server Massal** (dilindungi tombol konfirmasi 30s)',
+      });
+      return true;
+    }
+
+    // Case 1: Server Wipe (creset all [cash|bank|all])
+    if (firstArg === 'all' || firstArg === 'server' || firstArg === 'guild') {
+      const scopeArg = commandArgs[1]?.toLowerCase();
+      const targetType: 'cash' | 'bank' | 'all' =
+        scopeArg === 'cash' ? 'cash' : scopeArg === 'bank' ? 'bank' : 'all';
+
+      const sessionId = crypto.randomUUID().slice(0, 8);
+      activeResetSessions.set(sessionId, {
+        sessionId,
+        developerId: user.id,
+        channelId: message.channel.id,
+        targetType,
+        createdAt: Date.now(),
+      });
+
+      const confirmEmbed = new EmbedBuilder()
+        .setColor(COLORS.ERROR || (0xed4245 as any))
+        .setTitle('⚠️ [DANGER] SERVER ECONOMY WIPE CONFIRMATION')
+        .setDescription(
+          `Tindakan ini akan mengosongkan saldo **${targetType.toUpperCase()}** dari **SEMUA MEMBER** yang terdaftar di database!\n\n` +
+          `🚨 **PERINGATAN:** Tindakan ini bersifat **PERMANEN** dan **TIDAK DAPAT DIBATALKAN**.\n\n` +
+          `👤 **Inisiator Developer:** <@${user.id}>\n` +
+          `🎯 **Target Scope:** \`${targetType.toUpperCase()}\`\n` +
+          `⏳ **Batas Waktu:** 30 detik (otomatis dibatalkan jika tidak ada respon)`
+        )
+        .setFooter({ text: 'Cozy For Us • Developer Protection System' })
+        .setTimestamp();
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`dev_reset_confirm_${sessionId}`)
+          .setLabel(`⚠️ WIPE ALL (${targetType.toUpperCase()})`)
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`dev_reset_cancel_${sessionId}`)
+          .setLabel('❌ Batalkan')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      const replyMsg = await message.reply({
+        embeds: [confirmEmbed],
+        components: [row],
+      });
+
+      // Auto-expire session after 30 seconds
+      setTimeout(async () => {
+        const session = activeResetSessions.get(sessionId);
+        if (session) {
+          activeResetSessions.delete(sessionId);
+          try {
+            const expiredEmbed = new EmbedBuilder()
+              .setColor(COLORS.DARK)
+              .setTitle('⌛ [WIPE EXPIRED] Konfirmasi Reset Dibatalkan')
+              .setDescription('Waktu konfirmasi 30 detik telah habis. Tidak ada data yang diubah.')
+              .setTimestamp();
+            await replyMsg.edit({ embeds: [expiredEmbed], components: [] });
+          } catch {
+            // Ignored if message already deleted or edited
+          }
+        }
+      }, 30000);
+
+      return true;
+    }
+
+    // Case 2: Specific User Reset (creset @user [cash|bank|all] or creset self [cash|bank|all])
+    let targetUser = message.mentions.users.first();
+    let remainingArgs = commandArgs.filter(
+      (a) => !a.startsWith('<@') && !a.startsWith('<@!')
+    );
+
+    if (!targetUser) {
+      if (firstArg === 'self' || firstArg === 'me') {
+        targetUser = user;
+        remainingArgs = remainingArgs.filter((a) => a !== 'self' && a !== 'me');
+      } else if (/^\d{17,20}$/.test(firstArg)) {
+        const fetched = await client.users.fetch(firstArg).catch(() => null);
+        if (fetched) {
+          targetUser = fetched;
+          remainingArgs = remainingArgs.slice(1);
+        }
+      }
+    }
+
+    if (!targetUser) {
+      await message.reply({
+        content: '❌ Harap mention user target atau gunakan `self` / `all`! Contoh: `creset @user` atau `creset all`',
+      });
+      return true;
+    }
+
+    const scopeArg = remainingArgs[0]?.toLowerCase();
+    const targetType: 'cash' | 'bank' | 'all' =
+      scopeArg === 'cash' ? 'cash' : scopeArg === 'bank' ? 'bank' : 'all';
+
+    const isSelf = targetUser.id === user.id;
+    const targetLabel = isSelf ? 'your wallet' : `<@${targetUser.id}>'s wallet`;
+
+    try {
+      const res = await gambleService.devResetUser(targetUser.id, targetType, user.id, targetUser.username);
+      const scopeName = targetType === 'all' ? 'CASH & BANK' : targetType.toUpperCase();
+      await message.reply({
+        content:
+          `👑 **[Developer Override]** Berhasil mereset saldo **${scopeName}** untuk ${targetLabel} menjadi **0**!\n` +
+          `💳 Saldo Saat Ini: (Cash: \`${formatCash(res.cash)}\` | Bank: \`${formatCash(res.bank)}\` | Total: \`${formatCash(res.total)}\`)`,
+      });
+    } catch (err) {
+      logger.error({ err }, 'Error executing devResetUser:');
+      await message.reply({ content: '❌ Terjadi kesalahan saat mereset saldo user.' });
+    }
+
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // DEVELOPER COMMAND: cdec, creduce, cpotong (Strictly Owner/Dev Only)
+  // -------------------------------------------------------------
+  const isDecCommand =
+    firstWord === 'cdec' ||
+    firstWord === 'cozydec' ||
+    firstWord === 'creduce' ||
+    firstWord === 'cozyreduce' ||
+    firstWord === 'cpotong' ||
+    firstWord === 'cozypotong' ||
+    firstWord === 'ctakecash' ||
+    (firstWord === 'cozy' && (secondWord === 'dec' || secondWord === 'reduce' || secondWord === 'potong' || secondWord === 'takecash'));
+
+  if (isDecCommand) {
+    if (!isDeveloper(user, guild, client)) {
+      await message.reply({ content: '🚫 You do not have developer permission to use this command!' });
+      return true;
+    }
+
+    const commandArgs = firstWord === 'cozy' ? args.slice(2) : args.slice(1);
+
+    // Target user extraction
+    let targetUser = message.mentions.users.first();
+    const nonMentionArgs = commandArgs.filter(
+      (a) => !a.startsWith('<@') && !a.startsWith('<@!')
+    );
+
+    let amountStr: string | undefined;
+    let targetType: 'cash' | 'bank' | 'all' = 'cash'; // Default: cash
+
+    for (const a of nonMentionArgs) {
+      const lower = a.toLowerCase();
+      if (lower === 'cash' || lower === 'bank' || lower === 'all') {
+        targetType = lower as 'cash' | 'bank' | 'all';
+      } else if (!targetUser && /^\d{17,20}$/.test(a)) {
+        const fetched = await client.users.fetch(a).catch(() => null);
+        if (fetched) {
+          targetUser = fetched;
+        } else {
+          amountStr = a;
+        }
+      } else if (!amountStr) {
+        amountStr = a;
+      }
+    }
+
+    if (!targetUser) {
+      targetUser = user; // default to self if no mention
+    }
+
+    if (!amountStr) {
+      await message.reply({
+        content:
+          '❌ Format: `cdec <amount> [cash|bank|all] [@user]`\n' +
+          'Contoh:\n' +
+          '• `cdec 50k @user` (Potong 50,000 dari dompet Cash)\n' +
+          '• `cdec bank 100k @user` (Potong 100,000 dari Bank)\n' +
+          '• `cdec all 250k @user` (Smart Cascade: potong Cash dulu, lalu Bank)',
+      });
+      return true;
+    }
+
+    const parsedNominal = parseNominal(amountStr);
+    if (!parsedNominal.valid || !parsedNominal.amount || parsedNominal.amount <= 0n) {
+      await message.reply({
+        content: '❌ Masukkan nominal angka positif yang valid! (Contoh: `50000`, `10k`, `100k`, `1m`)',
+      });
+      return true;
+    }
+
+    const amount = parsedNominal.amount;
+    const isSelf = targetUser.id === user.id;
+    const targetLabel = isSelf ? 'your wallet' : `<@${targetUser.id}>'s wallet`;
+
+    try {
+      const res = await gambleService.devDecreaseBalance(
+        targetUser.id,
+        amount,
+        targetType,
+        user.id,
+        targetUser.username
+      );
+
+      const clampedNotice =
+        res.totalDeducted < amount
+          ? `\n*(⚠️ Saldo target tidak mencukupi nominal penuh, dipotong maksimal ${currencyEmoji} \`${formatCash(res.totalDeducted)}\` dan saldo di-clamp ke 0)*`
+          : '';
+
+      await message.reply({
+        content:
+          `👑 **[Developer Override]** Berhasil memotong ${currencyEmoji} **${formatCash(res.totalDeducted)} Cozy Cash** (${res.targetType.toUpperCase()}) dari ${targetLabel}!${clampedNotice}\n` +
+          `💳 Saldo Saat Ini: (Cash: \`${formatCash(res.cash)}\` | Bank: \`${formatCash(res.bank)}\` | Total: \`${formatCash(res.total)}\`)`,
+      });
+    } catch (err) {
+      logger.error({ err }, 'Error executing devDecreaseBalance:');
+      await message.reply({ content: '❌ Terjadi kesalahan saat memotong saldo user.' });
+    }
+
     return true;
   }
 
@@ -1829,22 +2743,72 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
   }
 
   // -------------------------------------------------------------
-  // 1. CASH / BALANCE: ccash, cozycash, cozy cash, cozy bal
+  // 1. CASH / BALANCE: ccash, cbal, cozycash, cozy cash, cozy bal
   // -------------------------------------------------------------
   if (
     firstWord === 'ccash' ||
+    firstWord === 'cbal' ||
+    firstWord === 'cbalance' ||
     firstWord === 'cozycash' ||
     (firstWord === 'cozy' && (secondWord === 'cash' || secondWord === 'bal' || secondWord === 'balance'))
   ) {
     const targetUser = message.mentions.users.first() || user;
+    const isSelf = targetUser.id === user.id;
     try {
       const balance = await gambleService.getBalance(targetUser.id, targetUser.username);
+      const bankDisplay = balance.hideBank ? 'hide by user.' : formatCash(balance.bank);
+      const subject = isSelf ? 'You currently have' : `**${targetUser.displayName || targetUser.username}** currently has`;
       await message.reply({
-        content: `${currencyEmoji} | You currently have **${formatCash(balance.total)} Cozy Cash**! (Cash: \`${formatCash(balance.cash)}\` | Bank: \`${formatCash(balance.bank)}\`)`,
+        content: `${currencyEmoji} | ${subject} **${formatCash(balance.cash)} Cozy Cash**! (Cash: \`${formatCash(balance.cash)}\` | Bank: \`${bankDisplay}\`)`,
       });
     } catch (err) {
       logger.error({ err }, 'Error handling ccash:');
       await message.reply({ content: '❌ Terjadi kesalahan saat memeriksa saldo.' });
+    }
+    return true;
+  }
+
+  // -------------------------------------------------------------
+  // 1b. PRIVACY BANK BALANCE: chidebank, cshowbank, ctogglebank
+  // -------------------------------------------------------------
+  if (
+    firstWord === 'chidebank' ||
+    firstWord === 'cshowbank' ||
+    firstWord === 'ctogglebank' ||
+    firstWord === 'cozyhidebank' ||
+    firstWord === 'cozyshowbank' ||
+    firstWord === 'cozytogglebank' ||
+    (firstWord === 'cozy' && (secondWord === 'hidebank' || secondWord === 'showbank' || secondWord === 'togglebank'))
+  ) {
+    let mode: 'hide' | 'show' | 'toggle' = 'toggle';
+    if (firstWord.includes('hide') || secondWord === 'hidebank') mode = 'hide';
+    else if (firstWord.includes('show') || secondWord === 'showbank') mode = 'show';
+
+    try {
+      let hideBank: boolean;
+      if (mode === 'hide') {
+        const res = await gambleService.setHideBank(user.id, true, user.username);
+        hideBank = res.hideBank;
+      } else if (mode === 'show') {
+        const res = await gambleService.setHideBank(user.id, false, user.username);
+        hideBank = res.hideBank;
+      } else {
+        const res = await gambleService.toggleHideBank(user.id, user.username);
+        hideBank = res.hideBank;
+      }
+
+      if (hideBank) {
+        await message.reply({
+          content: `🔒 | **${displayName}**, saldo Bank kamu sekarang **disembunyikan**!\nOrang lain saat mengecek saldomu atau di peringkat \`ctop bank\` akan melihat: \`(Bank: hide by user.)\` dan bankmu tidak akan dibocorkan ke publik.`,
+        });
+      } else {
+        await message.reply({
+          content: `🔓 | **${displayName}**, saldo Bank kamu sekarang **ditampilkan secara publik**!\nSaldo Cash & Bank kamu dapat dilihat normal dan masuk dalam peringkat \`ctop bank\`.`,
+        });
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error handling hidebank/showbank:');
+      await message.reply({ content: '❌ Terjadi kesalahan saat mengubah pengaturan privasi bank.' });
     }
     return true;
   }
@@ -2178,15 +3142,19 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
   }
 
   // -------------------------------------------------------------
-  // 8. LEADERBOARD: ctop, clb, cozy top, cozy lb
+  // 8. LEADERBOARD: ctop, clb, cozy top, cozy lb (ctop cash / ctop bank)
   // -------------------------------------------------------------
   if (
     firstWord === 'ctop' ||
     firstWord === 'clb' ||
     (firstWord === 'cozy' && (secondWord === 'top' || secondWord === 'lb'))
   ) {
+    const subArg = (firstWord === 'cozy' ? args[2] : args[1])?.toLowerCase();
+    const isBank = subArg === 'bank';
+    const lbType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
     try {
-      const { topUsers, userRank } = await gambleService.getLeaderboard(10, user.id);
+      const { topUsers, userRank } = await gambleService.getLeaderboard(lbType, 10, user.id);
 
       let desc = '';
       topUsers.forEach((u) => {
@@ -2196,19 +3164,28 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
         else if (u.rank === 3) medal = '🥉 **#3**';
 
         const name = u.username ? `@${u.username}` : `<@${u.discordId}>`;
-        desc += `${medal} ${name} — ${currencyEmoji} **${formatCash(u.total)} Cozy Cash** \`(Cash: ${formatCash(u.cash)} | Bank: ${formatCash(u.bank)})\`\n`;
+        if (isBank) {
+          const bankDisplay = u.hideBank ? 'hide by user.' : formatCash(u.bank);
+          desc += `${medal} ${name} — 🏛️ **${bankDisplay} Cozy Bank**\n`;
+        } else {
+          desc += `${medal} ${name} — ${currencyEmoji} **${formatCash(u.cash)} Cozy Cash**\n`;
+        }
       });
 
       if (!desc) {
-        desc = 'Belum ada data kekayaan di server.';
+        desc = `Belum ada data ${isBank ? 'bank' : 'cash'} di server.`;
       }
+
+      const embedTitle = isBank
+        ? '🏛️ Top Bank Leaderboard — Cozy For Us'
+        : '🏆 Top Cash Leaderboard — Cozy For Us';
 
       const embed = new EmbedBuilder()
         .setColor(COLORS.PRIMARY)
-        .setTitle('🏆 Top Leaderboard — Cozy For Us')
+        .setTitle(embedTitle)
         .setDescription(desc)
         .setFooter({
-          text: `Peringkat kamu: ${userRank ? `#${userRank}` : 'Belum masuk peringkat'} • ${BOT_DEFAULTS.FOOTER_TEXT}`,
+          text: `Peringkat kamu: ${userRank ? `#${userRank}` : 'Belum masuk peringkat'} • ${BOT_DEFAULTS.FOOTER_TEXT} • Gunakan 'ctop cash' atau 'ctop bank'`,
         })
         .setTimestamp();
 
@@ -2893,5 +3870,519 @@ export async function handleGambleTextMessage(client: CozyClient, message: Messa
     return true;
   }
 
+  // -------------------------------------------------------------
+  // 13. COZY BLACKJACK 21 KASINO: cbj, cblackjack, cozy blackjack
+  // -------------------------------------------------------------
+  if (
+    firstWord === 'cbj' ||
+    firstWord === 'cblackjack' ||
+    firstWord === 'cozyblackjack' ||
+    (firstWord === 'cozy' && (secondWord === 'bj' || secondWord === 'blackjack'))
+  ) {
+    const bjArgs = firstWord === 'cozy' ? args.slice(2) : args.slice(1);
+    const subCommand = bjArgs[0]?.toLowerCase();
+
+    // Ensure Application Emojis are populated in memory cache
+    if (client.application?.emojis && client.application.emojis.cache.size === 0) {
+      await client.application.emojis.fetch().catch(() => {});
+    }
+
+    // ---- PvP DUEL MODE: cbj duel @user <bet> ----
+    if (subCommand === 'duel' || subCommand === 'pvp' || subCommand === 'vs') {
+      const targetArg = bjArgs[1];
+      const betInput = bjArgs[2] || '';
+
+      if (!targetArg || !betInput) {
+        await message.reply({
+          content: `❌ Format: \`cbj duel @user <bet>\` (Contoh: \`cbj duel @teman 10k\`, \`cbj vs @rival 50000\`)`,
+        });
+        return true;
+      }
+
+      // Resolve target user ID
+      const targetMatch = targetArg.match(/^<@!?(\d+)>$/);
+      const targetId = targetMatch ? targetMatch[1] : (/^\d+$/.test(targetArg) ? targetArg : null);
+
+      if (!targetId) {
+        await message.reply({ content: '🚫 | Format mention salah! Gunakan: `cbj duel @user <bet>`' });
+        return true;
+      }
+      if (targetId === user.id) {
+        await message.reply({ content: '🚫 | Anda tidak dapat menantang diri sendiri!' });
+        return true;
+      }
+
+      // Anti-concurrency
+      if (activeBlackjackPlayers.has(user.id)) {
+        await message.reply({ content: `⚠️ | **${displayName}**, Anda masih memiliki sesi Blackjack aktif!` });
+        return true;
+      }
+      if (activeBlackjackPlayers.has(targetId)) {
+        await message.reply({ content: '⚠️ | Lawan Anda sedang berada di meja permainan lain!' });
+        return true;
+      }
+
+      try {
+        // Fetch opponent
+        let targetUser;
+        try { targetUser = await client.users.fetch(targetId); } catch {
+          await message.reply({ content: '🚫 | User lawan tidak ditemukan!' });
+          return true;
+        }
+        if (targetUser.bot) {
+          await message.reply({ content: '🚫 | Anda tidak dapat menduel bot!' });
+          return true;
+        }
+
+        const targetMember = await guild.members.fetch(targetId).catch(() => null);
+        const targetDisplayName = targetMember?.displayName || targetUser.displayName || targetUser.username;
+
+        // Validate both players' balance
+        const p1Bal = await gambleService.getBalance(user.id);
+        const p2Bal = await gambleService.getBalance(targetId);
+        if (!p1Bal.isRegistered) { await message.reply({ content: '🚫 | Anda belum terdaftar! Ketik `creg` untuk mendaftar.' }); return true; }
+        if (!p2Bal.isRegistered) { await message.reply({ content: `🚫 | **${targetDisplayName}** belum terdaftar di Economy System!` }); return true; }
+
+        const engine = gambleService.getBlackjackEngine();
+        const betValidation = engine.validateBet(betInput, p1Bal.cash < p2Bal.cash ? p1Bal.cash : p2Bal.cash);
+        if (!betValidation.valid) {
+          if (betValidation.error === 'INSUFFICIENT_FUNDS') {
+            await message.reply({ content: `🚫 | Saldo salah satu pemain tidak mencukupi!` });
+          } else if (betValidation.error === 'BET_TOO_LOW') {
+            await message.reply({ content: '🚫 | Taruhan minimal adalah 1 Cozy Cash!' });
+          } else {
+            await message.reply({ content: '🚫 | Masukkan jumlah taruhan yang valid! (Contoh: `10k`, `50000`, `all`)' });
+          }
+          return true;
+        }
+
+        const bet = betValidation.amount!;
+        if (p2Bal.cash < bet) {
+          await message.reply({ content: `🚫 | Saldo **${targetDisplayName}** tidak cukup untuk taruhan ini!` });
+          return true;
+        }
+
+        // Lock both players
+        activeBlackjackPlayers.add(user.id);
+        activeBlackjackPlayers.add(targetId);
+
+        const chipEmoji = GambleAssets.getBlackjackEmoji('card_chip', guild, client);
+        const blackChipEmoji = GambleAssets.getBlackjackEmoji('card_chip_black', guild, client);
+        const vsEmoji = GambleAssets.getBlackjackEmoji('pvp_vs', guild, client);
+
+        // Challenge embed
+        const challengeEmbed = new EmbedBuilder()
+          .setColor(0xF1C40F)
+          .setAuthor({ name: '⚔️ ARENA DUEL 1v1 • HIGH-ROLLER INVITATION', iconURL: user.displayAvatarURL() })
+          .setTitle(`${vsEmoji} TANTANGAN MEJA BLACKJACK 1v1`)
+          .setDescription(
+            `╭────────────────────────────────╮\n` +
+            `   🔥 **${displayName}** menantang **${targetDisplayName}**!\n` +
+            `   Pertarungan kartu langsung dari 1 Deck Kasino Bersama (52 Cards).\n` +
+            `╰────────────────────────────────╯\n\n` +
+            `📊 **DETAIL TARUHAN DUEL:**\n` +
+            `• Taruhan Masing-masing : ${chipEmoji} **${formatCash(bet)}** Cozy Cash\n` +
+            `• **Total Pot Hadiah**    : ${blackChipEmoji} **${formatCash(bet * 2n)}** Cozy Cash *(Winner Takes All!)*\n` +
+            `• Aturan Permainan     : Pemain dengan skor tertinggi tanpa bust memenangkan seluruh pot!\n\n` +
+            `👉 **<@${targetId}>**, buktikan ketangkasan kartu Anda! Apakah Anda menerima tantangan ini?`
+          )
+          .setFooter({ text: '⏱️ Menunggu respon lawan... (Batas waktu 60 detik)' });
+
+        const duelId = `bjduel_${Date.now()}`;
+        const acceptBtn = new ButtonBuilder().setCustomId(`bjpvp_accept_${duelId}`).setLabel('Terima Duel').setStyle(ButtonStyle.Success).setEmoji('⚔️');
+        const declineBtn = new ButtonBuilder().setCustomId(`bjpvp_decline_${duelId}`).setLabel('Tolak').setStyle(ButtonStyle.Danger).setEmoji('❌');
+        const cancelBtn = new ButtonBuilder().setCustomId(`bjpvp_cancel_${duelId}`).setLabel('Batalkan').setStyle(ButtonStyle.Secondary).setEmoji('🛑');
+        const inviteRow = new ActionRowBuilder<ButtonBuilder>().addComponents(acceptBtn, declineBtn, cancelBtn);
+
+        const challengeMsg = await message.reply({ content: `<@${targetId}>`, embeds: [challengeEmbed], components: [inviteRow] });
+
+        const pendingDuel: BlackjackPendingDuel = {
+          duelId,
+          challengerId: user.id,
+          challengerDisplayName: displayName,
+          challengerAvatarUrl: user.displayAvatarURL(),
+          targetId,
+          targetDisplayName,
+          targetAvatarUrl: targetUser.displayAvatarURL(),
+          bet,
+          message: challengeMsg,
+        };
+
+        pendingDuel.timeoutHandle = setTimeout(async () => {
+          if (pendingBlackjackDuels.has(duelId)) {
+            pendingBlackjackDuels.delete(duelId);
+            activeBlackjackPlayers.delete(user.id);
+            activeBlackjackPlayers.delete(targetId);
+            await challengeMsg.edit({ content: '⏱️ | Tantangan duel dibatalkan karena tidak direspon.', embeds: [], components: [] }).catch(() => null);
+          }
+        }, 60_000);
+
+        pendingBlackjackDuels.set(duelId, pendingDuel);
+
+      } catch (err) {
+        logger.error({ err }, 'Error in cbj duel command:');
+        activeBlackjackPlayers.delete(user.id);
+        activeBlackjackPlayers.delete(targetId);
+        await message.reply({ content: '❌ Terjadi kesalahan saat membuat tantangan duel.' });
+      }
+      return true;
+    }
+
+    // ---- SOLO MODE: cbj <bet> ----
+    const betInput = bjArgs[0] || '';
+
+    if (!betInput) {
+      await message.reply({
+        content: `❌ Format: \`cbj <bet|all>\`\n• Solo: \`cbj 10k\`, \`cbj 50000\`, \`cbj all\`\n• PvP Duel: \`cbj duel @user 10k\``,
+      });
+      return true;
+    }
+
+    // Anti-concurrency
+    if (activeBlackjackPlayers.has(user.id)) {
+      await message.reply({ content: `⚠️ | **${displayName}**, Anda masih memiliki sesi Blackjack aktif! Selesaikan meja Anda terlebih dahulu.` });
+      return true;
+    }
+
+    activeBlackjackPlayers.add(user.id);
+
+    try {
+      const engine = gambleService.getBlackjackEngine();
+      const chipEmoji = GambleAssets.getBlackjackEmoji('card_chip', guild, client);
+      const shuffleEmoji = GambleAssets.getBlackjackEmoji('card_shuffle', guild, client);
+
+      // Start game
+      const gameState = await gambleService.startBlackjack(user.id, betInput);
+      if (!gameState.success) {
+        activeBlackjackPlayers.delete(user.id);
+        if (gameState.error === 'NOT_REGISTERED') {
+          await message.reply({ content: '🚫 | Anda belum terdaftar! Ketik `creg` untuk mendaftar.' });
+        } else if (gameState.error === 'INSUFFICIENT_FUNDS') {
+          await message.reply({ content: `🚫 | **${displayName}**, Saldo Cash Anda tidak mencukupi! (Saldo: ${currencyEmoji} \`${formatCash(gameState.userCash || 0n)}\`)` });
+        } else if (gameState.error === 'BET_TOO_LOW') {
+          await message.reply({ content: '🚫 | Taruhan minimal adalah 1 Cozy Cash!' });
+        } else {
+          await message.reply({ content: '🚫 | Masukkan jumlah taruhan yang valid! (Contoh: `10k`, `50000`, `all`)' });
+        }
+        return true;
+      }
+
+      // Intro suspense frame
+      const introMsg = await message.reply({
+        content: `${shuffleEmoji} | **${displayName}** memasang taruhan **${formatCash(gameState.bet)}** ${chipEmoji}\n*Dealer sedang mengocok deck kartu kasino 52-cards dan membagikan ke meja...*`,
+      });
+
+      await new Promise(r => setTimeout(r, 1200));
+
+      // Natural 21 instant win
+      if (gameState.isGameOver && gameState.result) {
+        await gambleService.applyBlackjackPayout(user.id, gameState.result);
+        const jackpotGif = GambleAssets.getBlackjackEmoji('bj_jackpot', guild, client);
+        const crownBadge = GambleAssets.getBlackjackEmoji('bj_blackjack', guild, client);
+        const finalEmbed = renderBlackjackSoloEmbed(user, displayName, gameState, guild, client);
+        const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId('bj_h_dis').setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+          new ButtonBuilder().setCustomId('bj_s_dis').setLabel('Stand (Tahan)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        );
+        let celebText = '';
+        if (gameState.isNaturalBlackjack && gameState.result.outcome === 'win') {
+          celebText = `${jackpotGif} ${crownBadge} **NATURAL BLACKJACK 21! JACKPOT KASINO!** ${crownBadge} ${jackpotGif}\n`;
+        }
+        await introMsg.edit({ content: celebText || null, embeds: [finalEmbed], components: [disabledRow] });
+        activeBlackjackPlayers.delete(user.id);
+        return true;
+      }
+
+      // Store session
+      const sessionId = `bj_${user.id}_${Date.now()}`;
+      const sessionData: BlackjackSoloSession = {
+        sessionId,
+        userId: user.id,
+        displayName,
+        userObj: user,
+        gameState,
+      };
+      activeBlackjackSessions.set(sessionId, sessionData);
+
+      // Build interactive buttons
+      const remainingCash = (gameState.userCash || 0n);
+      const canDoubleDown = remainingCash >= gameState.initialBet;
+
+      const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`bj_hit_${sessionId}`).setLabel('Hit (+1 Kartu)').setStyle(ButtonStyle.Primary).setEmoji('👊'),
+        new ButtonBuilder().setCustomId(`bj_stand_${sessionId}`).setLabel('Stand (Tahan)').setStyle(ButtonStyle.Danger).setEmoji('🛑'),
+      );
+      if (canDoubleDown) {
+        buttonsRow.addComponents(
+          new ButtonBuilder().setCustomId(`bj_double_${sessionId}`).setLabel('Double Down (2x)').setStyle(ButtonStyle.Success).setEmoji('⚡'),
+        );
+      }
+
+      const liveEmbed = renderBlackjackSoloEmbed(user, displayName, gameState, guild, client);
+      const gameMessage = await introMsg.edit({ content: null, embeds: [liveEmbed], components: [buttonsRow] });
+      sessionData.message = gameMessage;
+
+      // Start 60s timeout
+      setupBlackjackSoloTimeout(client, sessionData);
+      return true;
+
+    } catch (err) {
+      logger.error({ err }, 'Error in cbj solo command:');
+      activeBlackjackPlayers.delete(user.id);
+      await message.reply({ content: '❌ Terjadi kesalahan saat memulai permainan Blackjack.' });
+    }
+    return true;
+  }
+
+
   return false;
+}
+
+
+// ==========================================
+//  BLACKJACK VIP CASINO EMBED RENDERERS
+// ==========================================
+
+function renderBlackjackSoloEmbed(
+  user: { id: string; username: string; displayAvatarURL: () => string },
+  displayName: string,
+  gameState: BlackjackGameState,
+  guild: Guild,
+  client: any,
+  isTimeout = false,
+): EmbedBuilder {
+  const redChip = GambleAssets.getBlackjackEmoji('card_chip', guild, client);
+  const blackChip = GambleAssets.getBlackjackEmoji('card_chip_black', guild, client);
+  const dealIcon = GambleAssets.getBlackjackEmoji('card_deal', guild, client);
+  const doubleIcon = GambleAssets.getBlackjackEmoji('bj_double', guild, client);
+  const jackpotGif = GambleAssets.getBlackjackEmoji('bj_jackpot', guild, client);
+  const crownBadge = GambleAssets.getBlackjackEmoji('bj_blackjack', guild, client);
+  const winBadge = GambleAssets.getBlackjackEmoji('bj_win', guild, client);
+  const bustBadge = GambleAssets.getBlackjackEmoji('bj_bust', guild, client);
+  const loseBadge = GambleAssets.getBlackjackEmoji('bj_lose', guild, client);
+  const pushBadge = GambleAssets.getBlackjackEmoji('bj_push', guild, client);
+
+  const engine = gambleService.getBlackjackEngine();
+  const playerEval = engine.calculateHand(gameState.playerHand);
+  const dealerEval = engine.calculateHand(gameState.dealerHand);
+
+  const dealerCardsStr = gameState.dealerHand
+    .map(c => GambleAssets.getCardDisplay(c.card, c.hidden, client, guild))
+    .join(' ');
+  const playerCardsStr = gameState.playerHand
+    .map(c => GambleAssets.getCardDisplay(c.card, c.hidden, client, guild))
+    .join(' ');
+
+  let color = 0x2B2D31; // Sleek Casino Dark Velvet
+  let title = `${dealIcon} MEJA BLACKJACK VIP #21 | Taruhan: ${redChip} **${formatCash(gameState.bet)}**`;
+  let description = '';
+  let footerText = '🎲 [Hit] Tarik kartu | [Stand] Tahan | [Double Down] Gandakan taruhan • Batas waktu 60s';
+
+  if (gameState.isDoubleDown) {
+    footerText = '⚡ Double Down aktif! Taruhan digandakan dan menarik tepat 1 kartu terakhir.';
+  }
+
+  if (gameState.isGameOver && gameState.result) {
+    const res = gameState.result;
+    if (gameState.isNaturalBlackjack && res.outcome === 'win') {
+      color = 0xF1C40F; // Gold
+      title = `${jackpotGif} ${crownBadge} NATURAL 21 BLACKJACK! (+${formatCash(res.netProfit)} Cash)`;
+      description =
+        `╭────────────────────────────────╮\n` +
+        `   👑 **PERFECT NATURAL 21 BLACKJACK!**\n` +
+        `   Kombinasi kartu sempurna di awal pembagian!\n` +
+        `   💰 Total Payout: **+${formatCash(res.payout)}** Cozy Cash\n` +
+        `╰────────────────────────────────╯`;
+      footerText = '🏆 Kemenangan mutlak kasino tercapai! Main lagi dengan cbj <bet>';
+    } else if (res.outcome === 'win') {
+      color = 0x2ECC71; // Emerald Green
+      if (res.dealerScore > 21) {
+        title = `${winBadge} DEALER BUST! KEMENANGAN KASINO (+${formatCash(res.netProfit)} Cash)`;
+        description =
+          `╭────────────────────────────────╮\n` +
+          `   💥 **DEALER BUST (POIN MELEBIHI 21)!**\n` +
+          `   Dealer gagal, seluruh taruhan meja Anda menangkan!\n` +
+          `   💰 Total Hadiah: **+${formatCash(res.payout)}** Cozy Cash\n` +
+          `╰────────────────────────────────╯`;
+      } else {
+        title = `${winBadge} KEMENANGAN MEJA VIP! (+${formatCash(res.netProfit)} Cash)`;
+        description =
+          `╭────────────────────────────────╮\n` +
+          `   🎉 **SELAMAT ATAS KEMENANGAN ANDA!**\n` +
+          `   Skor Anda (${playerEval.points}) unggul dari Dealer (${dealerEval.points})!\n` +
+          `   💰 Total Hadiah: **+${formatCash(res.payout)}** Cozy Cash\n` +
+          `╰────────────────────────────────╯`;
+      }
+      footerText = '🏆 Selamat atas kemenangan Anda! Main lagi kapan saja dengan cbj <bet>';
+    } else if (res.outcome === 'lose') {
+      color = 0xED4245; // Crimson Red
+      if (playerEval.isBust) {
+        title = `${bustBadge} PLAYER BUST! TARUHAN HANGUS (-${formatCash(res.bet)} Cash)`;
+        description =
+          `╭────────────────────────────────╮\n` +
+          `   💀 **PLAYER BUST (NILAI MELEBIHI 21)!**\n` +
+          `   Total poin Anda (${playerEval.points}) melebihi batas 21.\n` +
+          `   Taruhan meja ditarik oleh pihak kasino.\n` +
+          `╰────────────────────────────────╯`;
+      } else {
+        title = `${loseBadge} DEALER MENANG! TARUHAN DITARIK (-${formatCash(res.bet)} Cash)`;
+        description =
+          `╭────────────────────────────────╮\n` +
+          `   ❌ **BANDAR MEMENANGKAN PUTARAN INI**\n` +
+          `   Skor Dealer (${dealerEval.points}) lebih tinggi dari skor Anda (${playerEval.points}).\n` +
+          `╰────────────────────────────────╯`;
+      }
+      footerText = '💀 Taruhan meja ditarik kasino. Coba keberuntungan Anda lagi!';
+    } else {
+      color = 0x95A5A6; // Platinum Gray
+      title = `${pushBadge} STANDOFF / PUSH! (Taruhan Dikembalikan)`;
+      description =
+        `╭────────────────────────────────╮\n` +
+        `   ⚖️ **SKOR IMBANG SEMPURNA (${playerEval.points} vs ${dealerEval.points})**\n` +
+        `   🤝 Taruhan **${formatCash(res.bet)}** Cozy Cash dikembalikan utuh tanpa potongan.\n` +
+        `╰────────────────────────────────╯`;
+      footerText = '⚖️ Hasil seri (Push). Taruhan dikembalikan utuh ke saldo Anda.';
+    }
+  } else {
+    description =
+      `╭────────────────────────────────╮\n` +
+      `   🏛️ **HIGH-STAKES BLACKJACK TABLE #21**\n` +
+      `   Taruhan: ${redChip} **${formatCash(gameState.bet)}** | Payout: ${blackChip} **${formatCash(gameState.bet * 2n)}**\n` +
+      `   Dealer wajib Hit jika poin < 17 (Soft 17 Stand)\n` +
+      `╰────────────────────────────────╯`;
+  }
+
+  if (isTimeout) {
+    footerText += ' ⏱️ (Waktu giliran habis - otomatis Stand)';
+  }
+
+  const dealerScoreText = gameState.isGameOver ? `[ ${dealerEval.points} Poin ]` : `[ ${dealerEval.points} + ? Poin ]`;
+  const playerScoreText = `[ ${playerEval.points} Poin${playerEval.hasSoftAce && !playerEval.isBust && playerEval.points !== 21 ? ' ✨ Soft Ace' : ''}${playerEval.isBust ? ' 💥 BUST' : ''}${gameState.isNaturalBlackjack ? ' 👑 21' : ''} ]`;
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setAuthor({ name: '⚜️ ROYALE VIP CASINO • SALON PRIVÉ ⚜️', iconURL: user.displayAvatarURL() })
+    .setTitle(title)
+    .setDescription(description)
+    .addFields(
+      {
+        name: `🤵 Dealer Bandar ─ ${dealerScoreText}`,
+        value: `${dealerCardsStr || '🎴'}\n*${gameState.isGameOver ? (dealerEval.isBust ? '💥 Dealer BUST (>21)' : '🛑 Berhenti di ' + dealerEval.points + ' Poin') : '1 Kartu Terbuka • 1 Kartu Tertutup (Hole Card)'}*`,
+        inline: false,
+      },
+      {
+        name: `👤 ${displayName} ─ ${playerScoreText}`,
+        value: `${playerCardsStr || '🎴'}\n*${gameState.isDoubleDown ? `${doubleIcon} Double Down Aktif (Taruhan 2x) • ` : ''}Total Kartu: ${gameState.playerHand.length} lembar${playerEval.hasSoftAce ? ' (As bernilai 11 atau 1)' : ''}*`,
+        inline: false,
+      },
+      {
+        name: `📊 Detail Taruhan & Pot Meja`,
+        value:
+          `• **Taruhan Awal:** ${redChip} \`${formatCash(gameState.initialBet || gameState.bet)}\` Cozy Cash\n` +
+          (gameState.isDoubleDown ? `• **Double Down:** ${doubleIcon} \`+${formatCash(gameState.initialBet)}\` Cozy Cash\n` : '') +
+          `• **Taruhan Aktif:** ${redChip} \`${formatCash(gameState.bet)}\` Cozy Cash\n` +
+          `• **Potensi Payout:** ${blackChip} \`${formatCash(gameState.bet * 2n)}\` Cozy Cash *(2.0x)*` +
+          (gameState.isGameOver && gameState.result ? `\n• **Status Akhir:** \`${gameState.result.outcome.toUpperCase()}\` • Laba Bersih: **${gameState.result.netProfit >= 0n ? '+' : ''}${formatCash(gameState.result.netProfit)}** Cozy Cash` : ''),
+        inline: false,
+      },
+    )
+    .setFooter({ text: footerText });
+
+  return embed;
+}
+
+function renderBlackjackDuelEmbed(
+  duelState: BlackjackDuelState,
+  guild: Guild,
+  client: any,
+  isTimeout = false,
+): EmbedBuilder {
+  const redChip = GambleAssets.getBlackjackEmoji('card_chip', guild, client);
+  const blackChip = GambleAssets.getBlackjackEmoji('card_chip_black', guild, client);
+  const vsGif = GambleAssets.getBlackjackEmoji('pvp_vs', guild, client);
+  const jackpotGif = GambleAssets.getBlackjackEmoji('bj_jackpot', guild, client);
+  const winBadge = GambleAssets.getBlackjackEmoji('bj_win', guild, client);
+  const bustBadge = GambleAssets.getBlackjackEmoji('bj_bust', guild, client);
+  const pushBadge = GambleAssets.getBlackjackEmoji('bj_push', guild, client);
+  const crownBadge = GambleAssets.getBlackjackEmoji('bj_blackjack', guild, client);
+  const p1 = duelState.p1;
+  const p2 = duelState.p2;
+
+  const p1CardsStr = p1.hand.map(c => GambleAssets.getCardDisplay(c.card, c.hidden, client, guild)).join(' ');
+  const p2CardsStr = p2.hand.map(c => GambleAssets.getCardDisplay(c.card, c.hidden, client, guild)).join(' ');
+
+  let color = 0x2B2D31;
+  let title = `${vsGif} ARENA DUEL BLACKJACK 1v1 | Pot: ${blackChip} **${formatCash(duelState.totalPot)}**`;
+  let description = '';
+  const activeTurnName = duelState.currentTurn === p1.id ? p1.displayName : p2.displayName;
+  let footerText = `🎯 Giliran Aktif: 👉 [ ${activeTurnName} ] sedang memilih langkah...`;
+
+  if (duelState.isGameOver && duelState.result) {
+    const res = duelState.result;
+    if (res.outcome === 'tie') {
+      color = 0x95A5A6;
+      title = `${pushBadge} HASIL DUEL: STANDOFF / SERI!`;
+      description =
+        `╭────────────────────────────────╮\n` +
+        `   ⚖️ **PERTANDINGAN SERI SEMPURNA!**\n` +
+        `   ${res.reason}\n` +
+        `   🤝 Taruhan masing-masing **${formatCash(duelState.bet)}** Cash dikembalikan utuh.\n` +
+        `╰────────────────────────────────╯`;
+      footerText = '🤝 Duel berakhir imbang. Saldo kedua pemain telah dikembalikan utuh.';
+    } else {
+      color = 0x2ECC71;
+      title = `${jackpotGif} ${crownBadge} JUARA DUEL: ${res.winnerName?.toUpperCase()}!`;
+      description =
+        `╭────────────────────────────────╮\n` +
+        `   👑 **KEMENANGAN MUTLAK 1v1!**\n` +
+        `   <@${res.winnerId}> berhasil menaklukkan meja kasino (${res.reason})!\n` +
+        `   💰 **Total Hadiah:** ${blackChip} **${formatCash(res.totalPot)}** Cozy Cash *(Winner Takes All!)*\n` +
+        `╰────────────────────────────────╯`;
+      footerText = `🏆 Selamat kepada ${res.winnerName} atas kemenangan duel!`;
+    }
+  } else {
+    description =
+      `╭────────────────────────────────╮\n` +
+      `   ⚔️ **1 DECK KASINO BERSAMA (52 KARTU)**\n` +
+      `   🎯 Giliran Aktif: 👉 **${activeTurnName}**\n` +
+      `   Skor tertinggi tanpa bust memenangkan seluruh pot meja!\n` +
+      `╰────────────────────────────────╯`;
+  }
+
+  if (isTimeout) {
+    footerText += ' ⏱️ (Waktu giliran habis - otomatis Stand)';
+  }
+
+  const p1IsTurn = !duelState.isGameOver && duelState.currentTurn === p1.id;
+  const p2IsTurn = !duelState.isGameOver && duelState.currentTurn === p2.id;
+
+  const p1StatusBadge = p1.status === 'bust' ? ` ${bustBadge} [ BUST ]` : p1.status === 'stood' ? ' 🛑 [ STOOD ]' : p1.status === 'natural' ? ` ${crownBadge} [ 21 ]` : p1IsTurn ? ' 🎯 [ GILIRAN ]' : '';
+  const p2StatusBadge = p2.status === 'bust' ? ` ${bustBadge} [ BUST ]` : p2.status === 'stood' ? ' 🛑 [ STOOD ]' : p2.status === 'natural' ? ` ${crownBadge} [ 21 ]` : p2IsTurn ? ' 🎯 [ GILIRAN ]' : '';
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setAuthor({ name: '⚔️ HIGH-ROLLER ARENA • 1v1 BLACKJACK DUEL ⚔️' })
+    .setTitle(title)
+    .setDescription(description)
+    .addFields(
+      {
+        name: `${p1IsTurn ? '👉 ' : ''}🔴 ${p1.displayName} ─ [ Skor: ${p1.score} ]${p1StatusBadge}`,
+        value: `${p1CardsStr || '🎴'}\n*Status: ${p1.status === 'playing' ? (p1IsTurn ? 'Sedang memilih langkah...' : 'Menunggu giliran...') : p1.status.toUpperCase()}*`,
+        inline: false,
+      },
+      {
+        name: `${p2IsTurn ? '👉 ' : ''}🔵 ${p2.displayName} ─ [ Skor: ${p2.score} ]${p2StatusBadge}`,
+        value: `${p2CardsStr || '🎴'}\n*Status: ${p2.status === 'playing' ? (p2IsTurn ? 'Sedang memilih langkah...' : 'Menunggu giliran...') : p2.status.toUpperCase()}*`,
+        inline: false,
+      },
+      {
+        name: `📊 DETAIL MEJA & POT TARUHAN`,
+        value:
+          `• **Taruhan Pemain:** ${redChip} \`${formatCash(duelState.bet)}\` Cozy Cash\n` +
+          `• **Total Pot Meja:** ${blackChip} \`${formatCash(duelState.totalPot)}\` Cozy Cash *(Winner Takes All)*\n` +
+          `• **Status Match:** ${duelState.isGameOver ? '`🏁 Pertandingan Selesai`' : `Giliran 👉 **${activeTurnName}**`}`,
+        inline: false,
+      },
+    )
+    .setFooter({ text: footerText });
 }

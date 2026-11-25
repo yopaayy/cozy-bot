@@ -11,11 +11,11 @@
 | Item | Status |
 |---|---|
 | **Fase Saat Ini** | Modul Ekstensi — Economy & Minigames System |
-| **Tahap Aktif** | Tahap 1, 2, & 3 `🟢` + Cozy Send `🟢` + Cozy Giveaway `🟢` + Cozy Cat Walk `🟢` + PvP Coinflip / Duels `🟢` |
+| **Tahap Aktif** | Tahap 1 s/d 6 `🟢 COMPLETED` (Core Economy, Mines, Coinflip, Cat Walk, PvP Duels, Blackjack 21 VIP Rework, Bilingual Help) |
 | **Terakhir Dikerjakan Oleh** | Antigravity AI |
-| **Tanggal Update Terakhir** | 2026-09-09 |
+| **Tanggal Update Terakhir** | 2026-09-13 |
 | **Blocker** | Tidak ada |
-| **Next Action** | Testing in-game PvP Coinflip / Duels & Next Minigames / Deployment |
+| **Next Action** | Live Server Testing & Transition to Fase 2 (Welcome & Goodbye System) |
 
 ---
 
@@ -188,6 +188,35 @@
 - [x] Transaksi database atomik dilindungi `withDbRetry` + mutex in-memory lock `activeCoinflips` anti multi-click exploit
 - [x] 53 / 53 unit tests PASSED di Vitest (10 tests di `CoinflipEngine.test.ts`, 3 tests di `gamble.service.test.ts`)
 - [x] TypeScript compilation check & production build passed (0 error)
+
+#### Tahap 4: Developer Economy Control System (`creset` & `cdec`) `🟢 COMPLETED`
+- [x] Command `creset` / `cozyreset`: reset user perorangan (`cash`, `bank`, atau `all`)
+- [x] Fitur **Server Wipe (`creset all`)**: Mengosongkan saldo seluruh database dengan perlindungan **Dialog Konfirmasi Tombol Merah 30 Detik** (eksklusif developer inisiator)
+- [x] Command `cdec` / `creduce` / `cpotong` / `ctakecash`: memotong saldo user (`cash`, `bank`, atau `all` smart cascade)
+- [x] **Safe Clamping**: Saldo di-clamp ke `0n`, tidak akan pernah bernilai negatif (anti underflow exploit)
+- [x] Proteksi input non-positif via `parseNominal`
+- [x] Pencatatan mutasi developer ke tabel `audit_log`
+- [x] 80 / 80 unit tests PASSED di Vitest (+9 tests baru)
+- [x] TypeScript build lolos 100% (0 error)
+
+#### Tahap 5: Interactive Bilingual Help (`chelp`) & Developer Guide (`cdev`) `🟢 COMPLETED`
+- [x] Command `chelp`: Pusat panduan seluruh fitur bot untuk semua member
+- [x] **Bilingual Support (ID & EN)**: Tombol interaktif `[ 🌐 ID / EN ]` untuk mengganti seluruh bahasa penjelasan secara dinamis
+- [x] **Dropdown Menu Kategori**: `StringSelectMenu` 6 kategori (Overview, Registrasi, Dompet, Hadiah, Minigames, PvP Arena)
+- [x] **Paginasi Interaktif**: Tombol `[ ◀️ Previous ]` dan `[ Next ▶️ ]` dengan auto-disable di halaman awal/akhir
+- [x] Command `cdev`: Cheat-sheet eksekutif emas khusus developer (tertutup dari user biasa)
+- [x] 86 / 86 unit tests PASSED di Vitest (+6 tests baru di `gamble.help.test.ts`)
+- [x] TypeScript build lolos 100% (0 error)
+
+#### Tahap 6: Cozy Blackjack 21 (Solo & PvP Duel) & VIP Casino Rework `🟢 COMPLETED`
+- [x] **100% Integrasi Seluruh 66 Aset**: 52 kartu remi Kenney (`card_<suit>_<rank>`), `card_back`, `card_chip`, `card_chip_black`, `card_deal`, `card_flip`, `card_shuffle`, `bj_jackpot`, `pvp_vs`, serta status badges (`bj_win`, `bj_bust`, `bj_lose`, `bj_push`, `bj_double`, `bj_blackjack`).
+- [x] **Static Application Emoji Snowflake Map**: Resolusi instan O(1) di `GambleAssets.APPLICATION_EMOJIS` dengan auto-fetch di `ready.ts`.
+- [x] **VIP Salon Privé Casino Embed**: Rework total embed solo dan duel dengan dark velvet palette (`#2B2D31`), felt borders, chip counters, status Soft/Hard Ace, dan banner kemenangan dinamis.
+- [x] **Suspense Realistis**: Animasi dealer membuka kartu rahasia (`<a:card_flip:...>`) saat pemain memilih Stand atau Double Down sebelum mengungkap skor final dan payout.
+- [x] **Eliminasi Bug Timeout**: Seluruh tombol (Hit, Stand, Double Down, Accept, Decline, Cancel) terintegrasi ke router global `client.buttons.set` dengan `deferUpdate()` instan (<20ms).
+- [x] **Bilingual Help Support**: Penambahan dokumentasi `cbj` (Minigames) dan `cbj duel` (PvP Duels) di `gamble.help.ts` (ID & EN).
+- [x] **136 / 136 unit tests PASSED** di Vitest (10 test suites lolos 100%).
+- [x] **TypeScript compilation check lolos** (0 error di `tsconfig.bot.json`).
 
 ---
 
@@ -451,6 +480,91 @@
 - **Status akhir**: Fitur PvP Coinflip / Duels selesai 100%, teruji aman, dan siap digunakan langsung.
 - **Blocker**: Tidak ada.
 - **Next Action**: Testing in-game di server & Next Minigames / Deployment.
+
+### Session #14 — 2026-09-10 (Developer Economy Controls: creset & cdec)
+- **Model**: Gemini 3.8 Flash (High)
+- **Durasi**: ~25 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **Sistem Kontrol Ekonomi Khusus Developer (`creset` & `cdec` / `creduce` / `cpotong` / `ctakecash`)**:
+    - **Proteksi Hak Akses Mutlak (`isDeveloper`)**: Command hanya dapat dijalankan oleh ID Developer (`1356611419436617948` / `OWNER_ID` / Owner Server Discord / Bot App Owner). Panggilan dari member biasa maupun admin langsung ditolak.
+    - **Reset Perorangan (`creset @user [cash|bank|all]`)**: Mengosongkan saldo Cash, Bank, atau keduanya ke `0`.
+    - **Server Economy Wipe (`creset all [cash|bank|all]`)**:
+      - Dilindungi **Dialog Konfirmasi Tombol Interaktif 30 Detik** (merah bahaya).
+      - Hanya developer inisiator yang berhak mengonfirmasi tombol `[ ⚠️ WIPE ALL ]` atau `[ ❌ Batalkan ]`.
+      - Eksekusi massal menggunakan `prisma.users.updateMany` dilindungi `withDbRetry`.
+    - **Pemotongan Saldo (`cdec <amount> [cash|bank|all] [@user]`)**:
+      - Mendukung argumen fleksibel: `cdec 50k @user`, `cdec bank 100k @user`, `cdec all 250k @user`.
+      - **Safe Clamping**: Saldo di-clamp ke `0n`, tidak pernah bernilai negatif (mencegah bug underflow pada algoritma judi).
+      - **Smart Cascade Deduct (`all`)**: Otomatis memotong dari Cash terlebih dahulu; jika tidak mencukupi, sisa nominal dipotong dari Bank.
+      - **Validasi Anti-Minus**: Parser `parseNominal` menolak input non-positif.
+    - **Pencatatan Jejak Audit**: Seluruh eksekusi reset dan pemotongan otomatis dicatat ke tabel `audit_log`.
+  - **Uji Coba & Stabilisasi**:
+    - 80 / 80 unit tests PASSED di Vitest (+9 unit tests baru di `gamble.service.test.ts`).
+    - TypeScript compilation (`tsc -p tsconfig.bot.json`) lolos 100% (0 error).
+  - Update dokumentasi proyek di `COMMANDS_GUIDE.md` dan `CHECKPOINT.md`.
+- **Status akhir**: Fitur Developer Economy Controls selesai 100%, anti-bypass, dan siap digunakan.
+- **Blocker**: Tidak ada.
+- **Next Action**: Live Server Testing & Transisi ke Fase 2 (Welcome & Goodbye System).
+
+### Session #15 — 2026-09-10 (Bilingual Help System: chelp & cdev)
+- **Model**: Gemini 3.8 Flash (High)
+- **Durasi**: ~25 menit
+- **Apa yang dikerjakan**:
+  - Implementasi penuh **Sistem Panduan Interaktif Bilingual (`chelp`) & Cheat-Sheet Developer (`cdev`)**:
+    - **Modul Terstruktur `gamble.help.ts`**:
+      - 6 Kategori Panduan Lengkap:
+        1. Overview & Quick Start (`cat_overview`)
+        2. Registrasi & Starter Bonus (`cat_reg`)
+        3. Dompet, Bank & Transfer Uang (`cat_wallet`)
+        4. Penghasilan & Hadiah Berkala (`cat_earn`)
+        5. Minigames Santai (`cat_minigames`)
+        6. PvP Arena Duels & Komunitas (`cat_pvp`)
+      - **Dukungan Dua Bahasa Penuh (Bilingual ID/EN)**: Setiap penjelasan, contoh, dan tip tersedia dalam Bahasa Indonesia dan English.
+      - **Komponen Interaktif Discord**:
+        - Row 1: `StringSelectMenu` untuk melompat langsung antar kategori.
+        - Row 2: Tombol `[ ◀️ Previous ]`, `[ 🌐 Ganti Bahasa (ID / EN) ]`, dan `[ Next ▶️ ]`.
+      - **State Management Sesi Sederhana**: Menyimpan halaman aktif dan bahasa per user dengan auto-expire 3 menit.
+    - **Command Developer `cdev` (Strictly Owner/Dev Only)**:
+      - Diproteksi mutlak via `isDeveloper()`. Member biasa yang mencoba mengakses langsung ditolak.
+      - Embed eksekutif emas menampilkan cheat-sheet ringkas seluruh command developer (`caddcash`, `csetcash`, `cdec`, `creset`, `cgw`).
+  - **Uji Coba & Stabilisasi**:
+    - 86 / 86 unit tests PASSED di Vitest (+6 unit tests baru di `gamble.help.test.ts`).
+    - TypeScript compilation (`tsc -p tsconfig.bot.json`) lolos 100% (0 error).
+  - Update dokumentasi di `COMMANDS_GUIDE.md` dan `CHECKPOINT.md`.
+- **Status akhir**: Fitur chelp dan cdev selesai 100%, teruji, dan siap digunakan.
+- **Blocker**: Tidak ada.
+- **Next Action**: Live Server Testing di server Cozy For Us & transisi ke Fase 2 (Welcome & Goodbye System).
+
+### Session 8 — Bank Privacy Customization (`chidebank`), `ccash` Calculation Revision, & Dedicated Leaderboards (`ctop cash` & `ctop bank`)
+- **Tanggal**: 2026-09-10
+- **Fokus**: Menambahkan kustomisasi privasi saldo bank per user, merevisi kalkulasi & format `ccash` (hanya saldo Cash di teks utama dan format `(Cash: X | Bank: Y)` atau `(Cash: X | Bank: hide by user.)`), serta memecah `ctop` menjadi `ctop cash` (tanpa bank) dan `ctop bank` (dengan penenggelaman user hidden ke saldo 0 demi privasi).
+- **Hasil**:
+  - **Database Migration**:
+    - Kolom `hide_bank BOOLEAN NOT NULL DEFAULT FALSE` berhasil disinkronisasi ke tabel `users` MySQL.
+    - Prisma schema diperbarui dengan `hideBank Boolean @default(false) @map("hide_bank")`.
+  - **Prisma & Service Layer**:
+    - `gamble.types.ts`: Menambahkan `hideBank: boolean` pada `UserBalanceData` dan `LeaderboardEntry` (beserta `effectiveBank?: bigint`).
+    - `gamble.service.ts`:
+      - `ensureUser` menyertakan `hideBank: false`.
+      - `getBalance` mengembalikan `hideBank: Boolean(user.hideBank)`.
+      - Menambahkan `setHideBank` dan `toggleHideBank`.
+      - Mengupgrade `getLeaderboard(type: 'cash' | 'bank' = 'cash', limit = 10, currentUserId?: string)`. Untuk `type === 'bank'`, member dengan `hideBank === true` diberi bobot `effectiveBank = 0n` sehingga turun ke peringkat bawah dan kekayaan rahasianya tidak bocor ke publik.
+  - **Text Command Handlers**:
+    - `ccash` / `cbal`:
+      - Teks utama hanya menampilkan **Cash** (`You currently have **X Cozy Cash**!`).
+      - Suffix format: `(Cash: 99,299 | Bank: 520,304)` jika visible, atau `(Cash: 99,299 | Bank: hide by user.)` jika hidden.
+      - Mendukung inspeksi member lain (`ccash @user`) dengan tetap mematuhi privasi bank mereka.
+    - `chidebank` / `cshowbank` / `ctogglebank`: Memberikan hak penuh kepada setiap member untuk menyembunyikan atau menampilkan status tabungan bank mereka.
+    - `ctop`: Dipecah menjadi `ctop cash` (hanya Cash murni tanpa bank) dan `ctop bank` (hanya Bank, dengan proteksi privasi).
+  - **Help Center & Panduan**:
+    - `gamble.help.ts`: Kategori `cat_wallet` dan `cat_earn` diperbarui dalam Bahasa Indonesia dan Bahasa Inggris untuk menjelaskan sistem privasi bank dan pembagian leaderboard.
+    - `COMMANDS_GUIDE.md`: Diperbarui dengan command dan penjelasan terbaru.
+  - **Uji Coba & Stabilisasi**:
+    - 91 / 91 unit tests PASSED di Vitest (+5 unit tests baru di `gamble.service.test.ts`).
+    - TypeScript compilation (`tsc -p tsconfig.bot.json`) lolos 100% (0 error).
+- **Status akhir**: Fitur selesai 100%, teruji, dan stabil.
+- **Blocker**: Tidak ada.
+- **Next Action**: Live Server Testing di Discord Cozy For Us.
 
 ---
 

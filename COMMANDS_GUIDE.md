@@ -1,6 +1,15 @@
-# 📖 Cozy Bot — Command & Testing Cheat Sheet (Tahap 1)
+# 📖 Cozy Bot — Command & Testing Cheat Sheet
 
 > **Catatan Penting:** Seluruh command di bawah ini adalah **Direct Text Commands** (diketik langsung di chat tanpa tanda garis miring `/`).
+
+---
+
+## 🌟 0. Pusat Bantuan Interaktif (`chelp` & `cdev`)
+
+| Command | Alias | Akses | Deskripsi Fitur |
+| :--- | :--- | :---: | :--- |
+| `chelp` | `cozyhelp`, `cozy help` | **Semua Member** | **Pusat Panduan Interaktif Bilingual:**<br>• Menampilkan panduan lengkap seluruh fitur ekonomi bot.<br>• **Bilingual (ID/EN)**: Tekan tombol **[ 🌐 ID / EN ]** untuk mengganti bahasa penjelasan instan.<br>• **Dropdown Kategori**: Melompat ke 6 kategori fitur.<br>• **Paginasi**: Tombol **[ ◀️ Previous ]** dan **[ Next ▶️ ]**. |
+| `cdev` | `cozydev`, `cozy dev` | **Developer Only** | **Cheat-Sheet Khusus Developer:**<br>• Menampilkan seluruh command manajemen ekonomi, manipulasi saldo, reset/wipe, dan event giveaway developer.<br>• Tertutup dan diproteksi dari member biasa. |
 
 ---
 
@@ -32,7 +41,10 @@
 
 | Command | Contoh Penggunaan | Deskripsi |
 | :--- | :--- | :--- |
-| `ccash` | `ccash` atau `ccash @teman` | Cek total kekayaan, saldo aktif dompet `Cash`, dan saldo simpanan `Bank` |
+| `ccash [@user]` | `ccash` atau `ccash @teman` | **Cek Saldo Dompet & Simpanan:**<br>• Teks utama hanya menampilkan saldo aktif **Cash**.<br>• Rincian suffix menampilkan Cash dan Bank: `(Cash: 99,299 \| Bank: 520,304)`.<br>• Jika bank disembunyikan: `(Cash: 99,299 \| Bank: hide by user.)`.<br>• Bisa cek saldo member lain (`ccash @user`) dengan tetap mematuhi privasi bank mereka. |
+| `chidebank` | `chidebank` / `cozyhidebank` | **Sembunyikan Saldo Bank:** Mengunci status saldo bankmu menjadi rahasia dari publik dan papan peringkat bank (`Bank: hide by user.`). |
+| `cshowbank` | `cshowbank` / `cozyshowbank` | **Tampilkan Saldo Bank:** Mengembalikan status saldo bank agar terlihat normal secara publik. |
+| `ctogglebank` | `ctogglebank` | **Beralih Status Privasi Bank:** Praktis toggle antara sembunyikan/tampilkan. |
 | `cdep <nominal\|all>` | `cdep 5000`<br>`cdep 10k`<br>`cdep 100k`<br>`cdep all` | Menyetor uang dari dompet `Cash` ke `Bank` agar aman |
 | `cwith <nominal\|all>` | `cwith 2000`<br>`cwith 10k`<br>`cwith 50k`<br>`cwith all` | Menarik uang dari `Bank` kembali ke dompet aktif `Cash` |
 | `csend <nominal\|all> @user`<br>atau<br>`csend @user <nominal\|all>` | `csend 50k @dojaa`<br>`csend @dojaa 50k`<br>`cozysend 50000 @dojaa`<br>`csend all @dojaa` | **Transfer Uang dengan Konfirmasi Interaktif:**<br>• Menampilkan dialog konfirmasi embed persis referensi dengan tombol `[ ✅ Confirm ]` & `[ ❌ Cancel ]`.<br>• **Hanya pengirim** yang berhak klik konfirmasi/batal.<br>• **Hanya saldo Cash** yang bisa dikirim (saldo Bank aman terlindungi).<br>• Kedua belah pihak (pengirim & penerima) **wajib sudah terdaftar** via `creg`.<br>• Auto-cancel jika tidak ada tindakan dalam 60 detik. |
@@ -49,11 +61,14 @@
 
 ---
 
-## 4. 🏆 Papan Peringkat Sultan (*Leaderboard*)
+## 4. 🏆 Papan Peringkat Sultan (*Leaderboards*)
+
+Sistem leaderboard kini dipisah menjadi 2 kategori mandiri demi keadilan dan privasi:
 
 | Command | Alias | Deskripsi |
 | :--- | :--- | :--- |
-| `ctop` | `clb`, `cozy top`, `cozy lb` | Menampilkan 10 member terkaya di server (`Cash` + `Bank`) dengan embed Black & White elegan, medali 🥇, 🥈, 🥉, serta info peringkat kamu di footer |
+| `ctop cash` | `ctop`, `clb`, `clb cash` | **Papan Peringkat Cash Murni:**<br>• Menampilkan 10 member dengan saldo dompet **Cash** terbanyak di server.<br>• Tidak menyertakan atau menampilkan saldo Bank sama sekali. |
+| `ctop bank` | `clb bank`, `cozy top bank` | **Papan Peringkat Bank (Privasi Penuh):**<br>• Menampilkan 10 member dengan tabungan **Bank** terbanyak di server.<br>• **Aturan Privasi:** Member yang mengaktifkan `chidebank` akan otomatis dianggap memiliki Bank 0 sehingga berada di peringkat bawah dan kekayaan rahasianya tidak dibocorkan ke publik! |
 
 ---
 
@@ -80,8 +95,11 @@ Mesin slot 3-reel dengan **5 simbol kustom** dari aset yang Anda unggah dan anim
 
 | Command | Format & Contoh | Deskripsi |
 | :--- | :--- | :--- |
+| `cdev` / `cozydev` | `cdev` | **Membuka Cheat-Sheet Developer:**<br>Menampilkan daftar ringkas seluruh command developer, format, dan contoh penggunaannya. |
 | `caddcash` / `cgivecash` | `caddcash 1000000`<br>`caddcash 500000 @teman` | Menambahkan nominal Cozy Cash ke dompet Cash Anda (atau user yang di-mention) |
 | `csetcash` | `csetcash 5000000`<br>`csetcash 100000 @teman` | Mengatur saldo dompet Cash ke angka tertentu secara instan |
+| `cdec` / `creduce`<br>`cpotong` / `ctakecash` | `cdec 50k @user`<br>`cdec bank 100k @user`<br>`cdec all 250k @user`<br>`cdec 50000` *(self)* | **Memotong Saldo Member Tertentu:**<br>• **Scope Fleksibel**: `cash` (default), `bank`, atau `all` (smart cascade: potong Cash dulu, sisanya dari Bank).<br>• **Safe Clamping**: Saldo tidak pernah minus. Jika saldo kurang, otomatis dipotong maksimal hingga 0.<br>• **Bebas Posisi & Shorthand**: Mendukung `10k`, `1m`, urutan `@user` bebas. |
+| `creset` / `cozyreset` | `creset @user`<br>`creset @user cash`<br>`creset @user bank`<br>`creset self`<br>`creset all` *(Server Wipe)* | **Mereset Saldo Menjadi 0:**<br>• **Perorangan**: Mengosongkan Cash, Bank, atau keduanya ke `0`.<br>• **Server Wipe (`creset all`)**: Mengosongkan saldo seluruh member server di database. Dilindungi **Dialog Konfirmasi Tombol Merah 30 Detik** (hanya developer inisiator yang bisa klik). |
 | `cgiveaway` / `cgw`<br>`cairdrop` | `cgw 5m 100k`<br>`cgw 5m 50`<br>`cgw 50k all`<br>`cgw end`<br>`cgw template` | **Menyelenggarakan Giveaway / Airdrop Komunitas:**<br>• **Uang Sistem**: Tidak memotong uang dev/host (meski dev punya 0 cash).<br>• **Dev Tidak Bisa Klaim**: Menjaga keadilan event.<br>• **1 Klaim per User & Anti-Race**: Proteksi mutex dan anti double-click.<br>• **Wajib Regis `creg`**: Member belum regis ditolak.<br>• **Live Update**: Embed gold ter-update real-time per klaim. |
 
 ---
@@ -135,6 +153,19 @@ Pertarungan duel lempar koin antar 2 pemain berhadapan secara langsung (**Player
 
 ---
 
+---
+
+## 🃏 11. Cozy Blackjack 21 & PvP Blackjack Duel (`cbj` & `cbj duel`)
+
+Permainan kartu kasino kelas dunia bergaya **VIP Salon Privé** yang didukung penuh oleh **66 aset kartu remi Kenney & status badges** kustom Discord:
+
+| Command | Mode | Contoh Penggunaan | Aturan & Detail Permainan |
+| :--- | :--- | :--- | :--- |
+| `cbj <bet\|all>` | **Solo Blackjack (vs Dealer Bandar)** | `cbj 10k`<br>`cbj 50000`<br>`cbj all`<br>`cozy bj 100k` | **Meja Kasino VIP 1-on-1 vs Dealer:**<br>• Didukung animasi pengocokan deck `<a:card_shuffle:id>` dan chip taruhan merah/hitam.<br>• Dealer membagikan 2 kartu terbuka untuk pemain, serta 1 kartu terbuka + 1 kartu tertutup (`card_back`) untuk Dealer.<br>• **Pilihan Aksi:**<br>&nbsp;&nbsp;• `[ 👊 Hit (+1 Kartu) ]`: Menarik 1 kartu tambahan.<br>&nbsp;&nbsp;• `[ 🛑 Stand (Tahan) ]`: Berhenti di skor saat ini. Dealer membuka kartu tertutup dengan animasi `<a:card_flip:id>` dan menarik kartu hingga minimal 17 poin (Soft 17 Stand).<br>&nbsp;&nbsp;• `[ ⚡ Double Down (2x) ]`: Melipatgandakan taruhan, menarik tepat 1 kartu terakhir, dan langsung Stand!<br>• **Payout:** 2.0x untuk kemenangan biasa, dan **Natural 21 Blackjack** membayar jackpot instan dengan `<a:bj_jackpot:id>` dan `<:bj_blackjack:id>`! |
+| `cbj duel @user <bet>` | **1v1 PvP Blackjack Duel (vs Rival)** | `cbj duel @teman 25k`<br>`cbj vs @rival 50000`<br>`cbj pvp @teman 100k` | **Pertarungan 1v1 dari 1 Deck Kasino Bersama (52 Kartu):**<br>• Tantang teman dengan embed megah berikon `<a:pvp_vs:id>` dan tombol `[ ⚔️ Terima Duel ]`, `[ ❌ Tolak ]`, `[ 🛑 Batalkan ]`.<br>• Kedua pemain bergantian mengambil keputusan (Hit atau Stand).<br>• Pemain dengan skor tertinggi tanpa bust memenangkan seluruh pot meja (**Winner Takes All**)! |
+
+---
+
 ## 🚀 Urutan Rekomendasi Skenario Uji Coba:
 
 1. Jalankan bot di terminal Anda:
@@ -156,6 +187,9 @@ Pertarungan duel lempar koin antar 2 pemain berhadapan secara langsung (**Player
 14. Mainkan Cozy Coinflip: `ccf 10k` atau `ccf 20k h` ➜ Animasi koin berputar 1.2s.
 15. Mainkan Cozy Cat Walk: `ccat 10k` atau `cwalk 50000` ➜ Perhatikan kucing `<a:cat_walk:id>` berdiri di petak 0 dengan 9 petak `<:cat_tile:id>`, klik tombol `[ 🐾 Step (+1,700) ]` untuk melangkah meninggalkan jejak paw/fish/yarn, dan klik `[ 💵 Cash Out: 11,700 ]` untuk mengamankan keuntungan!
 16. Mainkan PvP Coinflip Duel: `cduel @teman 50k` atau `ccf @teman 50k` ➜ Tantang teman Anda, perhatikan embed tantangan dengan 3 tombol interaktif (`Accept`, `Decline`, `Cancel`), klik `Accept`, saksikan animasi koin berputar 1.5 detik, dan rayakan kemenangan di embed hasil akhir!
+17. Mainkan Solo Blackjack: `cbj 10k` atau `cbj 50000` ➜ Saksikan animasi shuffle, kartu remi Kenney eksklusif, kartu tertutup dealer, tombol `Hit`, `Stand`, dan `Double Down`, serta efek flip kartu rahasia dealer saat giliran dealer!
+18. Mainkan PvP Blackjack Duel: `cbj duel @teman 50k` ➜ Saksikan embed tantangan duel 1v1 dengan 1 deck bersama 52 kartu, giliran bergantian, dan penentuan juara *Winner Takes All*!
+
 
 
 

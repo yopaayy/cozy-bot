@@ -16,6 +16,7 @@ model users {
   isRegistered Boolean   @default(false) @map("is_registered")
   cozyCash    BigInt    @default(0) @map("cozy_cash")
   cozyBank    BigInt    @default(0) @map("cozy_bank")
+  hideBank    Boolean   @default(false) @map("hide_bank")
   dailyStreak Int       @default(0) @map("daily_streak")
   lastDaily   DateTime? @map("last_daily")
   lastWeekly  DateTime? @map("last_weekly")

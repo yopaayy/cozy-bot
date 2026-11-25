@@ -1,9 +1,11 @@
 import { prisma } from '../../../shared/database';
 import { logger } from '../../../shared/logger';
+import { logAudit } from '../../../shared/audit-logger';
 import { SlotsEngine } from './engines/SlotsEngine';
 import { MinesEngine } from './engines/MinesEngine';
 import { CoinflipEngine } from './engines/CoinflipEngine';
 import { CatWalkEngine } from './engines/CatWalkEngine';
+import { BlackjackEngine } from './engines/BlackjackEngine';
 import { GambleAssets } from './gamble.assets';
 import { parseNominal } from './gamble.utils';
 import crypto from 'crypto';
@@ -23,6 +25,8 @@ import type {
   CatWalkStepResult,
   CatWalkCashOutResult,
   PvPDuelResult,
+  BlackjackGameState,
+  BlackjackDuelState,
 } from './gamble.types';
 
 const PROFESSIONS = [
@@ -59,14 +63,18 @@ export class GambleService {
   private minesEngine: MinesEngine;
   private coinflipEngine: CoinflipEngine;
   private catWalkEngine: CatWalkEngine;
+  private blackjackEngine: BlackjackEngine;
   public activeMinesGames = new Map<string, MinesGameSession>();
   public activeCatWalkGames = new Map<string, CatWalkSession>();
+  public activeBlackjackGames = new Map<string, BlackjackGameState>();
+  public activeBlackjackDuels = new Map<string, BlackjackDuelState>();
 
   constructor() {
     this.slotsEngine = new SlotsEngine();
     this.minesEngine = new MinesEngine({ totalTiles: 9, minMines: 1, maxMines: 8, rtp: 0.9334 });
     this.coinflipEngine = new CoinflipEngine();
     this.catWalkEngine = new CatWalkEngine();
+    this.blackjackEngine = new BlackjackEngine();
   }
 
   /**
@@ -136,6 +144,7 @@ export class GambleService {
           isRegistered: false,
           cozyCash: 0n,
           cozyBank: 0n,
+          hideBank: false,
           dailyStreak: 0,
         },
       });
@@ -149,6 +158,7 @@ export class GambleService {
     const user = await this.ensureUser(discordId, username);
     const cash = user.cozyCash;
     const bank = user.cozyBank;
+    const hideBank = Boolean((user as any).hideBank);
     const total = cash + bank;
 
     return {
@@ -157,6 +167,7 @@ export class GambleService {
       isRegistered: Boolean(user.isRegistered),
       cash,
       bank,
+      hideBank,
       total,
       dailyStreak: user.dailyStreak,
       lastDaily: user.lastDaily,
@@ -269,6 +280,37 @@ export class GambleService {
         };
       });
     });
+  }
+
+  /**
+   * Set hideBank privacy preference
+   */
+  public async setHideBank(
+    discordId: string,
+    hideBank: boolean,
+    username?: string | null,
+  ): Promise<{ success: boolean; hideBank: boolean }> {
+    await this.ensureUser(discordId, username);
+    const updated = await withDbRetry(async () => {
+      return prisma.users.update({
+        where: { discordId },
+        data: { hideBank },
+        select: { hideBank: true },
+      });
+    });
+    return { success: true, hideBank: updated.hideBank };
+  }
+
+  /**
+   * Toggle hideBank privacy preference
+   */
+  public async toggleHideBank(
+    discordId: string,
+    username?: string | null,
+  ): Promise<{ success: boolean; hideBank: boolean }> {
+    const user = await this.ensureUser(discordId, username);
+    const newStatus = !(user as any).hideBank;
+    return this.setHideBank(discordId, newStatus, username);
   }
 
   /**
@@ -453,27 +495,59 @@ export class GambleService {
   }
 
   /**
-   * Get leaderboard by total wealth (cash + bank)
+   * Get leaderboard by cash or bank
    */
-  public async getLeaderboard(limit = 10, currentUserId?: string): Promise<{ topUsers: LeaderboardEntry[]; userRank?: number }> {
+  public async getLeaderboard(
+    typeOrLimit: 'cash' | 'bank' | number = 'cash',
+    limitOrUserId: number | string = 10,
+    currentUserId?: string,
+  ): Promise<{ topUsers: LeaderboardEntry[]; userRank?: number; type: 'cash' | 'bank' }> {
+    let type: 'cash' | 'bank' = 'cash';
+    let limit = 10;
+    let targetUserId: string | undefined = currentUserId;
+
+    if (typeof typeOrLimit === 'number') {
+      type = 'cash';
+      limit = typeOrLimit;
+      if (typeof limitOrUserId === 'string') {
+        targetUserId = limitOrUserId;
+      }
+    } else {
+      type = typeOrLimit === 'bank' ? 'bank' : 'cash';
+      if (typeof limitOrUserId === 'number') {
+        limit = limitOrUserId;
+      }
+    }
+
     const allUsers = await prisma.users.findMany({
       select: {
         discordId: true,
         username: true,
         cozyCash: true,
         cozyBank: true,
+        hideBank: true,
       },
     });
 
-    const mapped = allUsers
-      .map((u) => ({
+    const mapped = allUsers.map((u) => {
+      const hideBank = Boolean(u.hideBank);
+      const effectiveBank = hideBank ? 0n : u.cozyBank;
+      return {
         discordId: u.discordId,
         username: u.username,
         cash: u.cozyCash,
         bank: u.cozyBank,
+        hideBank,
+        effectiveBank,
         total: u.cozyCash + u.cozyBank,
-      }))
-      .sort((a, b) => (b.total > a.total ? 1 : b.total < a.total ? -1 : 0));
+      };
+    });
+
+    if (type === 'bank') {
+      mapped.sort((a, b) => (b.effectiveBank > a.effectiveBank ? 1 : b.effectiveBank < a.effectiveBank ? -1 : 0));
+    } else {
+      mapped.sort((a, b) => (b.cash > a.cash ? 1 : b.cash < a.cash ? -1 : 0));
+    }
 
     const topUsers = mapped.slice(0, limit).map((u, index) => ({
       rank: index + 1,
@@ -481,14 +555,14 @@ export class GambleService {
     }));
 
     let userRank: number | undefined;
-    if (currentUserId) {
-      const foundIdx = mapped.findIndex((u) => u.discordId === currentUserId);
+    if (targetUserId) {
+      const foundIdx = mapped.findIndex((u) => u.discordId === targetUserId);
       if (foundIdx !== -1) {
         userRank = foundIdx + 1;
       }
     }
 
-    return { topUsers, userRank };
+    return { topUsers, userRank, type };
   }
 
   /**
@@ -657,6 +731,220 @@ export class GambleService {
         bank: updated.cozyBank,
         total: updated.cozyCash + updated.cozyBank,
       };
+    });
+  }
+
+  /**
+   * Developer-only: Reset user balance (cash, bank, or all) to 0
+   */
+  public async devResetUser(
+    discordId: string,
+    targetType: 'cash' | 'bank' | 'all' = 'all',
+    actorDiscordId: string,
+    username?: string | null,
+  ): Promise<{
+    cash: bigint;
+    bank: bigint;
+    total: bigint;
+    prevCash: bigint;
+    prevBank: bigint;
+    resetCash: boolean;
+    resetBank: boolean;
+  }> {
+    await this.ensureUser(discordId, username);
+
+    return withDbRetry(async () => {
+      const user = await prisma.users.findUnique({
+        where: { discordId },
+      });
+      const prevCash = user?.cozyCash ?? 0n;
+      const prevBank = user?.cozyBank ?? 0n;
+
+      const updateData: { cozyCash?: bigint; cozyBank?: bigint } = {};
+      const resetCash = targetType === 'cash' || targetType === 'all';
+      const resetBank = targetType === 'bank' || targetType === 'all';
+
+      if (resetCash) updateData.cozyCash = 0n;
+      if (resetBank) updateData.cozyBank = 0n;
+
+      const updated = await prisma.users.update({
+        where: { discordId },
+        data: updateData,
+      });
+
+      await logAudit({
+        actorDiscordId,
+        action: 'DEV_RESET_USER',
+        source: 'discord_bot',
+        detail: {
+          targetDiscordId: discordId,
+          targetType,
+          prevCash: prevCash.toString(),
+          prevBank: prevBank.toString(),
+          newCash: updated.cozyCash.toString(),
+          newBank: updated.cozyBank.toString(),
+        },
+      });
+
+      return {
+        cash: updated.cozyCash,
+        bank: updated.cozyBank,
+        total: updated.cozyCash + updated.cozyBank,
+        prevCash,
+        prevBank,
+        resetCash,
+        resetBank,
+      };
+    });
+  }
+
+  /**
+   * Developer-only: Reset ALL users' balances (cash, bank, or all) in the entire database
+   */
+  public async devResetAll(
+    targetType: 'cash' | 'bank' | 'all' = 'all',
+    actorDiscordId: string,
+  ): Promise<{ affectedCount: number; targetType: 'cash' | 'bank' | 'all' }> {
+    return withDbRetry(async () => {
+      const updateData: { cozyCash?: bigint; cozyBank?: bigint } = {};
+      if (targetType === 'cash' || targetType === 'all') updateData.cozyCash = 0n;
+      if (targetType === 'bank' || targetType === 'all') updateData.cozyBank = 0n;
+
+      const result = await prisma.users.updateMany({
+        data: updateData,
+      });
+
+      await logAudit({
+        actorDiscordId,
+        action: 'DEV_RESET_ALL_USERS',
+        source: 'discord_bot',
+        detail: {
+          targetType,
+          affectedCount: result.count,
+        },
+      });
+
+      return {
+        affectedCount: result.count,
+        targetType,
+      };
+    });
+  }
+
+  /**
+   * Developer-only: Decrease balance (cash, bank, or all via smart cascade)
+   * Ensures balance never goes below 0n (Safe Clamping).
+   */
+  public async devDecreaseBalance(
+    discordId: string,
+    amount: bigint,
+    targetType: 'cash' | 'bank' | 'all' = 'cash',
+    actorDiscordId: string,
+    username?: string | null,
+  ): Promise<{
+    cash: bigint;
+    bank: bigint;
+    total: bigint;
+    deductedCash: bigint;
+    deductedBank: bigint;
+    totalDeducted: bigint;
+    targetType: 'cash' | 'bank' | 'all';
+  }> {
+    if (amount <= 0n) {
+      throw new Error('INVALID_AMOUNT_POSITIVE');
+    }
+
+    await this.ensureUser(discordId, username);
+
+    return withDbRetry(async () => {
+      return prisma.$transaction(async (tx) => {
+        const user = await tx.users.findUnique({
+          where: { discordId },
+        });
+
+        if (!user) {
+          throw new Error('USER_NOT_FOUND');
+        }
+
+        let newCash = user.cozyCash;
+        let newBank = user.cozyBank;
+        let deductedCash = 0n;
+        let deductedBank = 0n;
+
+        if (targetType === 'cash') {
+          if (user.cozyCash >= amount) {
+            newCash = user.cozyCash - amount;
+            deductedCash = amount;
+          } else {
+            deductedCash = user.cozyCash;
+            newCash = 0n;
+          }
+        } else if (targetType === 'bank') {
+          if (user.cozyBank >= amount) {
+            newBank = user.cozyBank - amount;
+            deductedBank = amount;
+          } else {
+            deductedBank = user.cozyBank;
+            newBank = 0n;
+          }
+        } else {
+          // 'all' = Smart cascade deduction:
+          // Potong dari Cash terlebih dahulu. Jika Cash tidak mencukupi, sisa deduction dipotong dari Bank.
+          if (user.cozyCash >= amount) {
+            newCash = user.cozyCash - amount;
+            deductedCash = amount;
+          } else {
+            deductedCash = user.cozyCash;
+            newCash = 0n;
+            const remaining = amount - deductedCash;
+            if (user.cozyBank >= remaining) {
+              newBank = user.cozyBank - remaining;
+              deductedBank = remaining;
+            } else {
+              deductedBank = user.cozyBank;
+              newBank = 0n;
+            }
+          }
+        }
+
+        const totalDeducted = deductedCash + deductedBank;
+
+        const updated = await tx.users.update({
+          where: { discordId },
+          data: {
+            cozyCash: newCash,
+            cozyBank: newBank,
+          },
+        });
+
+        await logAudit({
+          actorDiscordId,
+          action: 'DEV_DECREASE_BALANCE',
+          source: 'discord_bot',
+          detail: {
+            targetDiscordId: discordId,
+            targetType,
+            requestedAmount: amount.toString(),
+            deductedCash: deductedCash.toString(),
+            deductedBank: deductedBank.toString(),
+            totalDeducted: totalDeducted.toString(),
+            prevCash: user.cozyCash.toString(),
+            prevBank: user.cozyBank.toString(),
+            newCash: updated.cozyCash.toString(),
+            newBank: updated.cozyBank.toString(),
+          },
+        });
+
+        return {
+          cash: updated.cozyCash,
+          bank: updated.cozyBank,
+          total: updated.cozyCash + updated.cozyBank,
+          deductedCash,
+          deductedBank,
+          totalDeducted,
+          targetType,
+        };
+      });
     });
   }
 
@@ -1300,6 +1588,130 @@ export class GambleService {
           winnerNewBalance: updatedWinner.cozyCash,
         };
       });
+    });
+  }
+
+
+  // ==========================================
+  //  BLACKJACK 21 SOLO MODE
+  // ==========================================
+
+  public getBlackjackEngine(): BlackjackEngine {
+    return this.blackjackEngine;
+  }
+
+  /**
+   * Start a solo Blackjack game. Validates bet & deducts upfront.
+   */
+  public async startBlackjack(discordId: string, betInput: string): Promise<BlackjackGameState & { userCash?: bigint }> {
+    return withDbRetry(async () => {
+      const user = await prisma.users.findUnique({ where: { discordId }, select: { cozyCash: true, isRegistered: true } });
+      if (!user || !user.isRegistered) {
+        return { success: false, error: 'NOT_REGISTERED' } as any;
+      }
+
+      const cash = user.cozyCash;
+      const validation = this.blackjackEngine.validateBet(betInput, cash);
+      if (!validation.valid) {
+        return { success: false, error: validation.error, userCash: cash } as any;
+      }
+
+      const bet = validation.amount!;
+
+      // Deduct bet upfront (atomicity)
+      await prisma.users.update({ where: { discordId }, data: { cozyCash: { decrement: bet } } });
+
+      const gameState = this.blackjackEngine.startGame(bet, cash);
+      return { ...gameState, userCash: cash - bet };
+    });
+  }
+
+  /**
+   * Player hits in solo blackjack
+   */
+  public blackjackHit(gameState: BlackjackGameState): { success: boolean; drawnCard?: number; error?: string } {
+    return this.blackjackEngine.hit(gameState);
+  }
+
+  /**
+   * Player stands in solo blackjack
+   */
+  public blackjackStand(gameState: BlackjackGameState): void {
+    this.blackjackEngine.stand(gameState);
+  }
+
+  /**
+   * Player doubles down in solo blackjack. Deducts additional bet.
+   */
+  public async blackjackDoubleDown(discordId: string, gameState: BlackjackGameState): Promise<{ success: boolean; error?: string }> {
+    return withDbRetry(async () => {
+      const user = await prisma.users.findUnique({ where: { discordId }, select: { cozyCash: true } });
+      if (!user || user.cozyCash < gameState.bet) {
+        return { success: false, error: 'INSUFFICIENT_FUNDS_FOR_DOUBLE' };
+      }
+
+      // Deduct additional bet
+      await prisma.users.update({ where: { discordId }, data: { cozyCash: { decrement: gameState.initialBet } } });
+
+      const result = this.blackjackEngine.doubleDown(gameState, user.cozyCash);
+      return result;
+    });
+  }
+
+  /**
+   * Apply payout for finished solo blackjack game
+   */
+  public async applyBlackjackPayout(discordId: string, result: { payout: bigint }): Promise<bigint> {
+    return withDbRetry(async () => {
+      if (result.payout > 0n) {
+        const updated = await prisma.users.update({
+          where: { discordId },
+          data: { cozyCash: { increment: result.payout } },
+          select: { cozyCash: true },
+        });
+        return updated.cozyCash;
+      }
+      const user = await prisma.users.findUnique({ where: { discordId }, select: { cozyCash: true } });
+      return user?.cozyCash ?? 0n;
+    });
+  }
+
+  // ==========================================
+  //  BLACKJACK PVP DUEL
+  // ==========================================
+
+  /**
+   * Start a PvP Blackjack duel. Deducts escrow from both players.
+   */
+  public async startBlackjackDuel(
+    p1: { id: string; username: string; displayName: string; avatarUrl: string },
+    p2: { id: string; username: string; displayName: string; avatarUrl: string },
+    bet: bigint,
+  ): Promise<BlackjackDuelState> {
+    return withDbRetry(async () => {
+      // Deduct escrow from both
+      await prisma.users.update({ where: { discordId: p1.id }, data: { cozyCash: { decrement: bet } } });
+      await prisma.users.update({ where: { discordId: p2.id }, data: { cozyCash: { decrement: bet } } });
+
+      return this.blackjackEngine.startDuel(p1, p2, bet);
+    });
+  }
+
+  /**
+   * Apply payout for finished PvP duel
+   */
+  public async applyBlackjackDuelPayout(duelState: BlackjackDuelState): Promise<void> {
+    if (!duelState.result) return;
+    return withDbRetry(async () => {
+      const result = duelState.result!;
+      if (result.outcome === 'tie') {
+        // Refund both
+        await prisma.users.update({ where: { discordId: duelState.p1.id }, data: { cozyCash: { increment: duelState.bet } } });
+        await prisma.users.update({ where: { discordId: duelState.p2.id }, data: { cozyCash: { increment: duelState.bet } } });
+      } else if (result.winnerId) {
+        // Winner takes the full pot
+        await prisma.users.update({ where: { discordId: result.winnerId }, data: { cozyCash: { increment: duelState.totalPot } } });
+      }
     });
   }
 }

@@ -1,142 +1,81 @@
 /**
  * emojis.js
- * Comprehensive Asset Dictionary for Discord Gamble Minigames
- * Contains original OwO custom Discord emojis, animated GIFs,
- * and universal Unicode fallbacks so the bot works anywhere.
+ * Global Gamble Asset Dictionary
+ * Supports both Discord Custom Emojis and Unicode Fallback.
  */
 
 const GambleAssets = {
-	// Currency / Cowoncy
 	currency: {
-		name: 'cowoncy',
+		label: 'Cash',
 		discord: '<:cowoncy:416043450337853441>',
 		unicode: '🪙',
-		label: 'Cowoncy',
 	},
-
-	// Coinflip Assets
+	blank: {
+		discord: '<:blank:427371936482328596>',
+		unicode: ' ',
+	},
 	coinflip: {
-		spin: {
-			discord: '<a:coinflip:436677458339823636>',
-			unicode: '🔄',
-			description: 'Animated spinning coin',
-		},
-		heads: {
-			discord: '<:head:436677933977960478>',
-			unicode: '🟡',
-			label: 'Heads',
-		},
-		tails: {
-			discord: '<:tail:436677926398853120>',
-			unicode: '⚪',
-			label: 'Tails',
-		},
+		rolling: { discord: '<a:coinflip:436677458339823636>', unicode: '🔄' },
+		heads: { discord: '<:head:436677933977960478>', unicode: '🟡' },
+		tails: { discord: '<:tail:436677926398853120>', unicode: '⚪' },
 	},
-
-	// Slot Machine Reel Symbols
 	slots: {
-		machineTitle: '**`___SLOTS___`**',
-		moving: {
-			discord: '<a:slot_gif:417473893368987649>',
-			unicode: '🎰',
-			description: 'Animated spinning slot reel',
-		},
+		moving: { discord: '<a:slot_gif:417473893368987649>', unicode: '🎰' },
 		symbols: {
-			eggplant: {
-				discord: '<:eggplant:417475705719226369>',
-				unicode: '🍆',
-				multiplier: '1x',
-			},
-			heart: {
-				discord: '<:heart:417475705899712522>',
-				unicode: '💖',
-				multiplier: '2x',
-			},
-			cherry: {
-				discord: '<:cherry:417475705178161162>',
-				unicode: '🍒',
-				multiplier: '3x',
-			},
-			cowoncy: {
-				discord: '<:cowoncy:417475705912426496>',
-				unicode: '🪙',
-				multiplier: '4x',
-			},
-			o_: {
-				discord: '<:o_:417475705899843604>',
-				unicode: '🅾️',
-				multiplier: '10x (O-W-O)',
-			},
-			w_: {
-				discord: '<:w_:417475705920684053>',
-				unicode: '🇼',
-				multiplier: '10x (O-W-O)',
-			},
+			eggplant: { discord: '<:eggplant:417475705719226369>', unicode: '🍆' },
+			heart: { discord: '<:heart:417475705899712522>', unicode: '💖' },
+			cherry: { discord: '<:cherry:417475705178161162>', unicode: '🍒' },
+			cowoncy: { discord: '<:cowoncy:417475705912426496>', unicode: '🪙' },
+			o_: { discord: '<:o_:417475705899843604>', unicode: '🅾️' },
+			w_: { discord: '<:w_:417475705920684053>', unicode: '🇼' },
 		},
 	},
-
-	// Blackjack Controls & Card Back
 	blackjack: {
-		hit: {
-			discord: '👊',
-			unicode: '👊',
-			label: 'Hit',
+		chip: { name: 'card_chip', unicode: '🪙' },
+		deal: { name: 'card_deal', unicode: '🎴' },
+		hit: { name: 'bj_hit', unicode: '👊' },
+		stand: { name: 'bj_stand', unicode: '🛑' },
+		double: { name: 'bj_double', unicode: '⚡' },
+		cardback: { name: 'card_back', unicode: '🎴' },
+		status: {
+			blackjack: { name: 'bj_blackjack', unicode: '👑' },
+			win: { name: 'bj_win', unicode: '🏆' },
+			bust: { name: 'bj_bust', unicode: '💥' },
+			lose: { name: 'bj_lose', unicode: '❌' },
+			push: { name: 'bj_push', unicode: '⚖️' },
+			double: { name: 'bj_double', unicode: '⚡' },
 		},
-		stand: {
-			discord: '🛑',
-			unicode: '🛑',
-			label: 'Stand',
-		},
-		doubleDown: {
-			discord: '⏫',
-			unicode: '⏫',
-			label: 'Double Down',
-		},
-		cardback: {
-			discord: '<:cardback:457084762230751254>',
-			unicode: '🎴',
-			label: 'Face Down Card',
-		},
-	},
-
-	// General UI & Notification Icons
-	ui: {
-		win: '🎉',
-		lose: '💀',
-		tie: '🤝',
-		warning: '⚠️',
-		error: '🚫',
-		clock: '⏱️',
-		moneyBag: '💰',
-		ticket: '🎟️',
 	},
 
 	/**
-	 * Helper to get symbol emoji
-	 * @param {'discord'|'unicode'} mode
-	 * @param {string} symbolKey
+	 * Retrieve a slot symbol by identifier
+	 * @param {string} name
+	 * @param {'discord'|'unicode'} [mode='discord']
 	 * @returns {string}
 	 */
-	getSlotSymbol(symbolKey, mode = 'discord') {
-		const sym = this.slots.symbols[symbolKey];
-		if (!sym) return '❓';
-		return mode === 'discord' ? sym.discord : sym.unicode;
+	getSlotSymbol(name, mode = 'discord') {
+		const symbol = this.slots.symbols[name];
+		if (!symbol) return name;
+		return symbol[mode] || symbol.unicode;
 	},
 
 	/**
-	 * Helper to get coin side emoji
-	 * @param {'h'|'t'|'spin'} side
-	 * @param {'discord'|'unicode'} mode
+	 * Resolve a status badge or chip emoji
+	 * @param {string} key - e.g. 'win', 'bust', 'blackjack', 'chip'
+	 * @param {'discord'|'unicode'} [mode='discord']
+	 * @param {import('discord.js').Client} [client]
 	 * @returns {string}
 	 */
-	getCoinEmoji(side, mode = 'discord') {
-		if (side === 'spin') {
-			return mode === 'discord' ? this.coinflip.spin.discord : this.coinflip.spin.unicode;
-		}
-		if (side === 'h') {
-			return mode === 'discord' ? this.coinflip.heads.discord : this.coinflip.heads.unicode;
-		}
-		return mode === 'discord' ? this.coinflip.tails.discord : this.coinflip.tails.unicode;
+	getBlackjackAsset(key, mode = 'discord', client = null) {
+		const item = this.blackjack.status[key] || this.blackjack[key];
+		if (!item) return '';
+		if (mode === 'unicode' || !client) return item.unicode;
+
+		const emojiName = item.name;
+		const found = client.emojis?.cache?.find((e) => e.name === emojiName)
+			|| client.application?.emojis?.cache?.find((e) => e.name === emojiName);
+
+		return found ? found.toString() : item.unicode;
 	},
 };
 

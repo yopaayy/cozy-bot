@@ -9,6 +9,16 @@ export const event: Event<Events.ClientReady> = {
   execute: async (client) => {
     logger.info(`[Bot] Cozy Bot online as ${client.user?.tag}! 🤍`);
 
+    // Fetch and cache Application Emojis (Blackjack cards, chips, GIFs, etc.)
+    try {
+      if (client.application?.emojis) {
+        await client.application.emojis.fetch();
+        logger.info(`[Bot] Successfully loaded ${client.application.emojis.cache.size} Application Emojis into memory!`);
+      }
+    } catch (emojiErr) {
+      logger.error({ err: emojiErr }, '[Bot] Failed to preload application emojis:');
+    }
+
     // Fetch and cache verification panel messages across guilds
     try {
       const { prisma } = await import('../../shared/database');
